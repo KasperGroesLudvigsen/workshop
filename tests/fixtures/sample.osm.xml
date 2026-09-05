@@ -1,0 +1,102 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<osm version="0.6" generator="synthetic-fixture">
+  <!-- Big lake, ~9 ha (>= 5 ha min area), no swimming/badevand tag itself -->
+  <node id="1" lat="55.433891" lon="11.557365" version="1"/>
+  <node id="2" lat="55.433792" lon="11.562102" version="1"/>
+  <node id="3" lat="55.436485" lon="11.562276" version="1"/>
+  <node id="4" lat="55.436584" lon="11.557539" version="1"/>
+
+  <!-- Small pond, ~0.25 ha (< 5 ha min area) -->
+  <node id="11" lat="55.431513" lon="11.552864" version="1"/>
+  <node id="12" lat="55.431497" lon="11.553653" version="1"/>
+  <node id="13" lat="55.431946" lon="11.553682" version="1"/>
+  <node id="14" lat="55.431962" lon="11.552893" version="1"/>
+
+  <!-- Coastline, ~3km south of the lake -->
+  <node id="21" lat="55.403397" lon="11.532489" version="1"/>
+  <node id="22" lat="55.402407" lon="11.579816" version="1"/>
+
+  <!-- Marina, playground, pool as plain nodes -->
+  <node id="31" lat="55.429518" lon="11.551550" version="1">
+    <tag k="leisure" v="marina"/>
+    <tag k="name" v="Testhavn Marina"/>
+  </node>
+  <node id="32" lat="55.433689" lon="11.545495" version="1">
+    <tag k="leisure" v="playground"/>
+    <tag k="name" v="Skovlegepladsen"/>
+  </node>
+  <node id="33" lat="55.422654" lon="11.557429" version="1">
+    <tag k="leisure" v="swimming_pool"/>
+    <tag k="access" v="yes"/>
+    <tag k="name" v="Byens Svommehal"/>
+  </node>
+
+  <!-- Isolated lake, ~6.25 ha (>= 5 ha min area), no badevand/swimming_area/beach signal -->
+  <node id="51" lat="55.425084" lon="11.516096" version="1"/>
+  <node id="52" lat="55.425003" lon="11.520042" version="1"/>
+  <node id="53" lat="55.427247" lon="11.520185" version="1"/>
+  <node id="54" lat="55.427329" lon="11.516239" version="1"/>
+
+  <!-- OSM leisure=swimming_area sitting inside the big lake -->
+  <node id="41" lat="55.434842" lon="11.559166" version="1"/>
+  <node id="42" lat="55.434816" lon="11.560429" version="1"/>
+  <node id="43" lat="55.435534" lon="11.560475" version="1"/>
+  <node id="44" lat="55.435560" lon="11.559212" version="1"/>
+
+  <way id="100" version="1">
+    <nd ref="1"/>
+    <nd ref="2"/>
+    <nd ref="3"/>
+    <nd ref="4"/>
+    <nd ref="1"/>
+    <tag k="natural" v="water"/>
+    <tag k="water" v="lake"/>
+    <tag k="name" v="Store Testso"/>
+  </way>
+
+  <way id="150" version="1">
+    <nd ref="51"/>
+    <nd ref="52"/>
+    <nd ref="53"/>
+    <nd ref="54"/>
+    <nd ref="51"/>
+    <tag k="natural" v="water"/>
+    <tag k="water" v="lake"/>
+    <tag k="name" v="Ensom So"/>
+  </way>
+
+  <way id="101" version="1">
+    <nd ref="11"/>
+    <nd ref="12"/>
+    <nd ref="13"/>
+    <nd ref="14"/>
+    <nd ref="11"/>
+    <tag k="natural" v="water"/>
+    <tag k="water" v="lake"/>
+    <tag k="name" v="Lille Dam"/>
+  </way>
+
+  <way id="102" version="1">
+    <nd ref="21"/>
+    <nd ref="22"/>
+    <tag k="natural" v="coastline"/>
+  </way>
+
+  <way id="103" version="1">
+    <nd ref="41"/>
+    <nd ref="42"/>
+    <nd ref="43"/>
+    <nd ref="44"/>
+    <nd ref="41"/>
+    <tag k="leisure" v="swimming_area"/>
+    <tag k="name" v="Badezone Store Testso"/>
+  </way>
+
+  <!-- natural=beach way sharing the lake's south edge nodes -->
+  <way id="104" version="1">
+    <nd ref="1"/>
+    <nd ref="2"/>
+    <tag k="natural" v="beach"/>
+    <tag k="name" v="Testso Strand"/>
+  </way>
+</osm>

@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+data/*.duckdb
+data/*.pbf
+data/osm_store.pkl
+data/site/
+*.egg-info/

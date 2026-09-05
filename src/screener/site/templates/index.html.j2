@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Summer House Screener</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f7f7f5; color: #1c1c1c; }
+  header { padding: 12px 16px; background: #14343b; color: #fff; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header .count { font-size: 13px; opacity: 0.85; }
+  #filters { display: flex; gap: 10px; flex-wrap: wrap; padding: 10px 16px; background: #fff; border-bottom: 1px solid #ddd; align-items: end; }
+  #filters label { display: flex; flex-direction: column; font-size: 11px; color: #555; gap: 2px; }
+  #filters input[type="number"] { width: 90px; padding: 4px 6px; font-size: 13px; border: 1px solid #ccc; border-radius: 4px; }
+  #filters label.checkbox { flex-direction: row; align-items: center; gap: 6px; font-size: 12px; }
+  #layout { display: flex; height: calc(100vh - 116px); }
+  #map { flex: 1 1 55%; min-width: 320px; }
+  #table-wrap { flex: 1 1 45%; overflow: auto; background: #fff; }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  th, td { padding: 6px 8px; border-bottom: 1px solid #eee; white-space: nowrap; text-align: left; }
+  th { position: sticky; top: 0; background: #f0efe9; cursor: pointer; user-select: none; }
+  th.sorted::after { content: " \25BE"; }
+  tr:hover { background: #fbf8ee; }
+  a.ext-link { margin-right: 6px; font-size: 11px; }
+  .reason-none { color: #a33; }
+  .reason-ok { color: #2a7a3b; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Summer House Screener</h1>
+  <span class="count"><span id="visible-count">0</span> of {{ listings|length }} listings passing current filters</span>
+</header>
+<div id="filters">
+  <label>Water (km) <input type="number" id="f-water" step="0.5" value="{{ config.water_km }}"></label>
+  <label>Hangout (km) <input type="number" id="f-hangout" step="0.5" value="{{ config.hangout_km }}"></label>
+  <label>Grocery (km) <input type="number" id="f-grocery" step="0.5" value="{{ config.grocery_km }}"></label>
+  <label class="checkbox"><input type="checkbox" id="f-lake-strict" {% if config.lake_strict %}checked{% endif %}> Strict lake eligibility</label>
+  <label>Min price <input type="number" id="f-price-min"></label>
+  <label>Max price <input type="number" id="f-price-max"></label>
+  <label>Min rooms <input type="number" id="f-rooms-min"></label>
+  <label>Min m² <input type="number" id="f-size-min"></label>
+  <label>Min lot m² <input type="number" id="f-lot-min"></label>
+  <label>Min build year <input type="number" id="f-year-min"></label>
+</div>
+<div id="layout">
+  <div id="map"></div>
+  <div id="table-wrap">
+    <table id="table">
+      <thead>
+        <tr>
+          <th data-key="water_open_loose">Open water (km)</th>
+          <th data-key="water_sea">Sea (km)</th>
+          <th data-key="water_lake">Lake (km)</th>
+          <th data-key="lake_reason">Lake signal</th>
+          <th data-key="hangout_km">Hangout (km)</th>
+          <th data-key="hangout_count">Hangouts within</th>
+          <th data-key="grocery_km">Grocery (km)</th>
+          <th data-key="marina_km">Marina (km)</th>
+          <th data-key="playground_km">Playground (km)</th>
+          <th data-key="pool_km">Pool (km)</th>
+          <th data-key="beach_km">Beach (km)</th>
+          <th data-key="price">Price</th>
+          <th data-key="size_m2">m²</th>
+          <th data-key="lot_size_m2">Lot m²</th>
+          <th data-key="rooms">Rooms</th>
+          <th data-key="build_year">Year</th>
+          <th>Links</th>
+        </tr>
+      </thead>
+      <tbody id="table-body"></tbody>
+    </table>
+  </div>
+</div>
+<script>
+const LISTINGS = {{ listings_json|safe }};
+const DEFAULT_CONFIG = {{ config_json|safe }};
+
+let map = null;
+if (typeof L !== 'undefined') {
+  map = L.map('map').setView([55.5, 11.6], 9);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+} else {
+  document.getElementById('map').innerHTML =
+    '<p style="padding:16px;color:#a33;">Leaflet failed to load from the CDN (offline?) — table still works below.</p>';
+}
+
+let markers = [];
+let sortState = { key: 'hangout_km', dir: 1 };
+
+function fmt(n, digits) {
+  if (n === null || n === undefined || Number.isNaN(n)) return '—';
+  return Number(n).toFixed(digits === undefined ? 2 : digits);
+}
+
+function deriveRow(listing, cfg) {
+  const water = listing.water;
+  const openWater = cfg.lakeStrict ? water.open_water_km_strict : water.open_water_km_loose;
+  const lakeCandidate = cfg.lakeStrict ? water.nearest_eligible_lake : water.nearest_lake_any;
+  const hangout = listing.hangout;
+  const grocery = listing.grocery;
+
+  function categoryDistance(cat) {
+    return cat ? cat.nearest_km : null;
+  }
+  function countWithin(cat, radiusKm) {
+    if (!cat) return null;
+    return cat.candidates.filter(c => c.distance_km <= radiusKm).length;
+  }
+
+  const passesWater = openWater !== null && openWater <= cfg.waterKm;
+  const hangoutKm = categoryDistance(hangout);
+  const groceryKm = categoryDistance(grocery);
+  const passesHangout = hangoutKm === null ? true : hangoutKm <= cfg.hangoutKm; // null = not yet evaluated (pre-M5)
+  const passesGrocery = groceryKm === null ? true : groceryKm <= cfg.groceryKm;
+
+  return {
+    listing,
+    openWater,
+    lakeCandidate,
+    hangoutKm,
+    hangoutCount: countWithin(hangout, cfg.hangoutKm),
+    groceryKm,
+    marinaKm: categoryDistance(listing.marina),
+    playgroundKm: categoryDistance(listing.playground),
+    poolKm: categoryDistance(listing.pool),
+    beachKm: categoryDistance(listing.beach),
+    passes: passesWater && passesHangout && passesGrocery,
+  };
+}
+
+function currentConfig() {
+  return {
+    waterKm: parseFloat(document.getElementById('f-water').value),
+    hangoutKm: parseFloat(document.getElementById('f-hangout').value),
+    groceryKm: parseFloat(document.getElementById('f-grocery').value),
+    lakeStrict: document.getElementById('f-lake-strict').checked,
+    priceMin: parseFloat(document.getElementById('f-price-min').value) || null,
+    priceMax: parseFloat(document.getElementById('f-price-max').value) || null,
+    roomsMin: parseFloat(document.getElementById('f-rooms-min').value) || null,
+    sizeMin: parseFloat(document.getElementById('f-size-min').value) || null,
+    lotMin: parseFloat(document.getElementById('f-lot-min').value) || null,
+    yearMin: parseFloat(document.getElementById('f-year-min').value) || null,
+  };
+}
+
+function applyExtraFilters(row, cfg) {
+  const l = row.listing;
+  if (cfg.priceMin !== null && (l.price === null || l.price < cfg.priceMin)) return false;
+  if (cfg.priceMax !== null && (l.price === null || l.price > cfg.priceMax)) return false;
+  if (cfg.roomsMin !== null && (l.rooms === null || l.rooms < cfg.roomsMin)) return false;
+  if (cfg.sizeMin !== null && (l.size_m2 === null || l.size_m2 < cfg.sizeMin)) return false;
+  if (cfg.lotMin !== null && (l.lot_size_m2 === null || l.lot_size_m2 < cfg.lotMin)) return false;
+  if (cfg.yearMin !== null && (l.build_year === null || l.build_year < cfg.yearMin)) return false;
+  return true;
+}
+
+function sortRows(rows) {
+  const { key, dir } = sortState;
+  const getters = {
+    water_open_loose: r => r.openWater,
+    water_sea: r => r.listing.water.sea_distance_km,
+    water_lake: r => r.lakeCandidate ? r.lakeCandidate.distance_km : null,
+    lake_reason: r => r.lakeCandidate ? r.lakeCandidate.eligibility_reason : '',
+    hangout_km: r => r.hangoutKm,
+    hangout_count: r => r.hangoutCount,
+    grocery_km: r => r.groceryKm,
+    marina_km: r => r.marinaKm,
+    playground_km: r => r.playgroundKm,
+    pool_km: r => r.poolKm,
+    beach_km: r => r.beachKm,
+    price: r => r.listing.price,
+    size_m2: r => r.listing.size_m2,
+    lot_size_m2: r => r.listing.lot_size_m2,
+    rooms: r => r.listing.rooms,
+    build_year: r => r.listing.build_year,
+  };
+  const getter = getters[key] || getters.hangout_km;
+  return rows.slice().sort((a, b) => {
+    const av = getter(a), bv = getter(b);
+    if (av === null || av === undefined) return 1;
+    if (bv === null || bv === undefined) return -1;
+    if (av < bv) return -1 * dir;
+    if (av > bv) return 1 * dir;
+    return 0;
+  });
+}
+
+function render() {
+  const cfg = currentConfig();
+  let rows = LISTINGS.map(l => deriveRow(l, cfg)).filter(r => r.passes).filter(r => applyExtraFilters(r, cfg));
+  rows = sortRows(rows);
+
+  document.getElementById('visible-count').textContent = rows.length;
+
+  if (map) {
+    markers.forEach(m => map.removeLayer(m));
+    markers = [];
+  }
+  const tbody = document.getElementById('table-body');
+  tbody.innerHTML = '';
+
+  for (const row of rows) {
+    const l = row.listing;
+    if (map) {
+      const marker = L.marker([l.lat, l.lon]).addTo(map);
+      marker.bindPopup(popupHtml(row));
+      markers.push(marker);
+    }
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${fmt(row.openWater)}</td>
+      <td>${fmt(l.water.sea_distance_km)}</td>
+      <td>${row.lakeCandidate ? fmt(row.lakeCandidate.distance_km) : '—'}</td>
+      <td class="${row.lakeCandidate && row.lakeCandidate.eligible ? 'reason-ok' : 'reason-none'}">${row.lakeCandidate ? row.lakeCandidate.eligibility_reason : '—'}</td>
+      <td>${fmt(row.hangoutKm)}</td>
+      <td>${row.hangoutCount === null ? '—' : row.hangoutCount}</td>
+      <td>${fmt(row.groceryKm)}</td>
+      <td>${fmt(row.marinaKm)}</td>
+      <td>${fmt(row.playgroundKm)}</td>
+      <td>${fmt(row.poolKm)}</td>
+      <td>${fmt(row.beachKm)}</td>
+      <td>${l.price ?? '—'}</td>
+      <td>${l.size_m2 ?? '—'}</td>
+      <td>${l.lot_size_m2 ?? '—'}</td>
+      <td>${l.rooms ?? '—'}</td>
+      <td>${l.build_year ?? '—'}</td>
+      <td>${linksHtml(l)}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
+function namesList(cat, radiusKm) {
+  if (!cat) return '<em>not yet available</em>';
+  const within = cat.candidates.filter(c => c.distance_km <= radiusKm);
+  if (within.length === 0) return '<em>none within radius</em>';
+  return within.map(c => `${c.name} (${fmt(c.distance_km)} km)`).join(', ');
+}
+
+function popupHtml(row) {
+  const l = row.listing;
+  const cfg = currentConfig();
+  return `
+    <div style="font-size:12px; max-width: 260px;">
+      <strong>${l.address ?? l.listing_id}</strong><br>
+      Open water: ${fmt(row.openWater)} km (sea ${fmt(l.water.sea_distance_km)} km,
+        lake ${row.lakeCandidate ? fmt(row.lakeCandidate.distance_km) + ' km, ' + row.lakeCandidate.eligibility_reason : 'n/a'})<br>
+      Hangouts (${cfg.hangoutKm} km): ${namesList(l.hangout, cfg.hangoutKm)}<br>
+      Grocery (${cfg.groceryKm} km): ${namesList(l.grocery, cfg.groceryKm)}<br>
+      Marina: ${namesList(l.marina, 15)}<br>
+      Playground: ${namesList(l.playground, 15)}<br>
+      Pool: ${namesList(l.pool, 15)}<br>
+      Beach: ${namesList(l.beach, 15)}<br>
+      ${linksHtml(l)}
+    </div>
+  `;
+}
+
+function linksHtml(l) {
+  return `
+    <a class="ext-link" href="${l.boliga_url ?? '#'}" target="_blank" rel="noopener">Boliga</a>
+    <a class="ext-link" href="${l.map_links.google_pin}" target="_blank" rel="noopener">Pin</a>
+    <a class="ext-link" href="${l.map_links.google_aerial}" target="_blank" rel="noopener">Aerial</a>
+    <a class="ext-link" href="${l.map_links.google_street}" target="_blank" rel="noopener">Street</a>
+    <a class="ext-link" href="${l.map_links.apple}" target="_blank" rel="noopener">Apple</a>
+  `;
+}
+
+document.querySelectorAll('#filters input').forEach(el => el.addEventListener('input', render));
+document.querySelectorAll('th[data-key]').forEach(th => {
+  th.addEventListener('click', () => {
+    const key = th.dataset.key;
+    if (sortState.key === key) { sortState.dir *= -1; } else { sortState = { key, dir: 1 }; }
+    document.querySelectorAll('th').forEach(h => h.classList.remove('sorted'));
+    th.classList.add('sorted');
+    render();
+  });
+});
+
+render();
+</script>
+</body>
+</html>

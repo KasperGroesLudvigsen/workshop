@@ -1,0 +1,59 @@
+# Single source of truth for the screener's hard-filter thresholds and switches.
+# Read by both the batch scorer (src/screener/config.py) and embedded into the
+# generated site's JSON so the client can recompute counts/filters live.
+
+# Hard filter distances, in km.
+water_km: 7.0
+hangout_km: 4.0
+grocery_km: 10.0
+
+# Lakes smaller than this (hectares) are excluded from open-water distance
+# entirely, regardless of eligibility — farm ponds, drainage basins, flooded
+# pits carry the same OSM tags as real lakes.
+min_lake_area_ha: 5.0
+
+# Whether a lake must have a positive swimmability signal (badevand /
+# leisure=swimming_area / natural=beach on its shore) to count toward
+# open_water_km. Strict silently drops good listings whose lake has no
+# official designation but is genuinely swimmable; loose is more permissive.
+# Both are computed and shipped to the site so the UI toggle is instant.
+lake_strict: true
+
+# Outer radius (km) used when building the per-listing amenity candidate
+# lists shipped to the client. Must be >= the largest of the informational
+# amenity radii the UI is expected to let the user dial up to.
+amenity_search_radius_km: 15.0
+
+# Region scope: postal code ranges covering Sjaelland, Lolland, Falster, Moen.
+postal_ranges:
+  - [3000, 3699]
+  - [4000, 4990]
+
+# Boliga property-type code for fritidsbolig. Filled in from a live probe of
+# api.boliga.dk (see fetch/boliga.py docstring for how it was confirmed).
+boliga_property_type_fritidsbolig: null  # TODO: set once confirmed live
+
+# Categories that are hard filters (fail => listing excluded).
+hard_filter_categories:
+  - water
+  - hangout
+  - grocery
+
+# Informational-only amenity categories: distance/count/names are computed
+# and shown, but never exclude a listing.
+informational_categories:
+  - playground
+  - pool
+  - marina
+  - fish_shop
+  - wine_shop
+  - ice_cream
+  - butcher
+  - beach
+
+# Boliga fetch politeness / safety.
+boliga:
+  base_url: "https://api.boliga.dk/api/v2/search/results"
+  requests_per_second: 1.0
+  max_results_per_query: 300
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
