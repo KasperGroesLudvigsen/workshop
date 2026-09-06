@@ -196,16 +196,11 @@ tried:
   this is an environment limitation, not a Boliga one.
 - Plain `requests`/`curl`: gets the challenge page, as expected.
 
-So this needs a normal machine on consumer internet. **What to do there** — unchanged from
-the previous handoff, and still the fastest path:
-
-1. Run `discover_property_types()` in that module against an unfiltered search for a mixed
-   postal code. It reads the type code/label pairs off Boliga's own response, so it needs no
-   DevTools session — just internet that isn't challenged.
-2. Set `boliga_property_type_fritidsbolig` in `config/thresholds.yaml` (still `null`).
-3. Confirm `_PARAM_NAMES` (`zipcodeFrom`/`zipcodeTo`/`page`/`pageSize`/`sort`/`propertyType`)
-   and the response-key candidates in `_extract_total_count`/`_extract_listings`, plus
-   `normalize_listing()`'s field-name candidates, against a real response.
+So this needs a normal machine on consumer internet. **See `docs/BOLIGA_DISCOVERY.md`** —
+step-by-step instructions written for exactly that, with a runnable script
+(`jobs/discover_boliga.py`) that answers all four open questions in three requests and
+writes `data/boliga_discovery.json` to hand back, plus a browser-DevTools fallback if
+Cloudflare challenges that machine too.
 
 Note that `curl_cffi` impersonation is likely to be *necessary* there too — the Cloudflare
 challenge is real and the module's choice of transport is vindicated, it just can't be
