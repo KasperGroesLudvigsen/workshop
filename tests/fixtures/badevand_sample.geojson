@@ -1,0 +1,54 @@
+{
+  "type": "FeatureCollection",
+  "comment": "Shaped exactly like a puls:Badevand WFS GetFeature response (property names and WaterType/Closed vocabulary verified against the live layer), but with synthetic sites positioned on the lakes in sample.osm.xml near Soroe.",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {"type": "Point", "coordinates": [11.518141, 55.426166]},
+      "properties": {
+        "BathingwaterStationId": "11111111-1111-1111-1111-111111111111",
+        "Name": "Ensom So Badested",
+        "WaterType": "Ferskvand",
+        "Closed": null,
+        "BlueFlag": false,
+        "LatestClassification": "Udmærket badevandskvalitet"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {"type": "Point", "coordinates": [11.550000, 55.402000]},
+      "properties": {
+        "BathingwaterStationId": "22222222-2222-2222-2222-222222222222",
+        "Name": "Testhavn Kyst",
+        "WaterType": "Marin",
+        "Closed": null,
+        "BlueFlag": true,
+        "LatestClassification": "Udmærket badevandskvalitet"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {"type": "Point", "coordinates": [11.518141, 55.426166]},
+      "properties": {
+        "BathingwaterStationId": "33333333-3333-3333-3333-333333333333",
+        "Name": "Nedlagt Sobad",
+        "WaterType": "Ferskvand",
+        "Closed": "2019-05-01T00:00:00Z",
+        "BlueFlag": false,
+        "LatestClassification": "Ringe badevandskvalitet"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {"type": "Point", "coordinates": [11.519000, 55.427000]},
+      "properties": {
+        "BathingwaterStationId": "44444444-4444-4444-4444-444444444444",
+        "Name": "Ukendt Vandtype Sted",
+        "WaterType": "Ukendt",
+        "Closed": null,
+        "BlueFlag": false,
+        "LatestClassification": "Ikke klassificeret"
+      }
+    }
+  ]
+}

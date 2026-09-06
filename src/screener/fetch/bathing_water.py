@@ -1,29 +1,40 @@
 """Bathing water (badevand) designations — the authoritative signal for
 lake swimmability under the brief's eligibility rules.
 
-Denmark's officially designated bathing waters (including inland lakes, not
-just coast) are reported under the EU Bathing Water Directive and
-aggregated by the EEA as part of its WISE bathing water dataset; Danish
-specifics also live on Miljoestyrelsen's badevand.dk portal. This sandbox
-cannot reach either live (see ``fetch/boliga.py``'s module docstring for the
-general no-egress constraint affecting every external data source in this
-build) — so **the exact current download URL and column schema below are
-not verified against the live source**. This is written against the
-dataset's well-documented general shape (one row per bathing-water site:
-name, lat/lon, and whether it's coastal or inland), with the column names
-isolated in ``_COLUMNS`` so a correction is a one-line change, and a loud
-``KeyError`` if a real download doesn't match rather than silently
-mis-parsing.
+Source: **Danmarks Miljoeportal's PULS register**, layer ``puls:Badevand``,
+served as public GeoServer WFS at ``pulsgeo.miljoeportal.dk`` and published
+CC0. This is the register Danish municipalities report into, so it is the
+authority for "is this lake an officially designated bathing water", not a
+derived or third-party list.
+
+Two other candidate sources were checked and rejected:
+
+- **EMODnet Human Activities** (``emodnet:bathingwaters``) is well
+  documented and easy to query, but it is a *marine* portal: all 27,794
+  Danish rows are "Coastal Bathing Water", and the layer carries no lake
+  sites for any country. Since this signal exists only to judge *lakes*, it
+  is exactly useless here — a plausible-looking dead end worth naming so it
+  isn't re-tried.
+- **Miljoeportal's own "Badevand: Analyse- og Maaleresultater" CSV** is the
+  measurement series (E. coli per sample). It carries station ids but no
+  coordinates, and its download needs an authenticated portal account. The
+  WFS layer used here needs neither.
+
+The register distinguishes ``WaterType`` "Ferskvand" (freshwater — lakes,
+146 sites) from "Marin" (1,327) and "Ukendt" (15). Only freshwater sites can
+make a lake eligible; the sea distance comes from OSM coastline and needs no
+designation. Sites carrying a ``Closed`` date are dropped — a closed bathing
+water is not a swimmability signal.
 
 Matching a designated site to an OSM lake polygon is spatial, not
-name-based: the official site's coordinate is often a sampling point or
-jetty, not the lake's centroid, and OSM/official names for the same lake
-frequently differ. A site counts as designating a lake if it falls within
-``MATCH_RADIUS_M`` of the lake's polygon.
+name-based: the official site's coordinate is a sampling point or jetty, not
+the lake's centroid, and OSM/official names for the same lake frequently
+differ. A site designates a lake if it falls within ``MATCH_RADIUS_M`` of
+the lake's polygon.
 """
 from __future__ import annotations
 
-import csv
+import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,19 +47,18 @@ from screener.geo.water import BadevandLookup
 
 logger = logging.getLogger(__name__)
 
-# Placeholder — the brief flags this as needing verification before relying
-# on it; EEA publishes per-country WISE bathing water extracts, Miljoestyrelsen
-# publishes Danish-specific detail via badevand.dk. Confirm the current
-# distribution format/URL from a networked machine before using this for real.
-BADEVAND_SOURCE_URL = "https://www.badevand.dk/api/badevand/export"
+BADEVAND_WFS_URL = "https://pulsgeo.miljoeportal.dk/geoserver/wfs"
+BADEVAND_LAYER = "puls:Badevand"
 
-_COLUMNS = {
-    "name": "name",
-    "lat": "lat",
-    "lon": "lon",
-    "water_type": "waterType",  # expected values include "coastal" / "inland" (or similar)
-}
-_INLAND_VALUES = {"inland", "indland", "sø", "soe", "lake"}
+#: Verified against the live layer (1,488 features): the register's own
+#: WaterType vocabulary. Anything not "Ferskvand" cannot make a lake
+#: eligible — "Ukendt" included, since an unknown water type is not a
+#: positive swimmability signal for a *lake* specifically.
+FRESHWATER_VALUE = "Ferskvand"
+
+#: Property names on the WFS features, isolated so a schema change is a
+#: one-line fix. Confirmed against DescribeFeatureType.
+_PROPERTIES = {"name": "Name", "water_type": "WaterType", "closed": "Closed"}
 
 MATCH_RADIUS_M = 200.0
 
@@ -61,36 +71,80 @@ class BathingWaterSite:
     is_inland: bool
 
 
-def download_badevand_dataset(dest_path: Path | str, url: str = BADEVAND_SOURCE_URL) -> Path:
+def download_badevand_dataset(
+    dest_path: Path | str, url: str = BADEVAND_WFS_URL, layer: str = BADEVAND_LAYER
+) -> Path:
+    """Fetch the register as GeoJSON in WGS84 and cache it to disk.
+
+    Explicit ``srsName`` because the layer's native CRS is not WGS84;
+    without it the coordinates come back projected and every downstream
+    lat/lon read would be silently wrong rather than failing.
+    """
     dest = Path(dest_path)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    resp = requests.get(url, timeout=60)
+    resp = requests.get(
+        url,
+        params={
+            "service": "WFS",
+            "version": "2.0.0",
+            "request": "GetFeature",
+            "typeName": layer,
+            "outputFormat": "application/json",
+            "srsName": "EPSG:4326",
+        },
+        timeout=180,
+    )
     resp.raise_for_status()
     dest.write_bytes(resp.content)
     return dest
 
 
-def load_badevand_sites(csv_path: Path | str) -> list[BathingWaterSite]:
+def load_badevand_sites(geojson_path: Path | str) -> list[BathingWaterSite]:
+    """Parse cached register GeoJSON into sites, dropping closed stations.
+
+    Raises rather than skipping when the expected properties are absent: a
+    schema drift that silently yielded zero inland sites would turn every
+    lake ineligible under strict mode, which looks exactly like "no good
+    lakes in Denmark" instead of like a bug.
+    """
+    payload = json.loads(Path(geojson_path).read_text(encoding="utf-8"))
+    features = payload.get("features")
+    if features is None:
+        raise KeyError(f"badevand GeoJSON has no 'features' key — found {sorted(payload)}")
+
     sites: list[BathingWaterSite] = []
-    with open(csv_path, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        missing = set(_COLUMNS.values()) - set(reader.fieldnames or [])
+    closed = 0
+    for feature in features:
+        props = feature.get("properties") or {}
+        missing = set(_PROPERTIES.values()) - set(props)
         if missing:
             raise KeyError(
-                f"badevand CSV missing expected columns {missing} — schema has likely "
-                f"changed, do not trust a partial parse. Found columns: {reader.fieldnames}"
+                f"badevand feature missing expected properties {sorted(missing)} — schema has "
+                f"likely changed, do not trust a partial parse. Found: {sorted(props)}"
             )
-        for row in reader:
-            sites.append(
-                BathingWaterSite(
-                    name=row[_COLUMNS["name"]],
-                    lat=float(row[_COLUMNS["lat"]]),
-                    lon=float(row[_COLUMNS["lon"]]),
-                    is_inland=row[_COLUMNS["water_type"]].strip().lower() in _INLAND_VALUES,
-                )
+        if props[_PROPERTIES["closed"]]:
+            closed += 1
+            continue
+        geometry = feature.get("geometry") or {}
+        coordinates = geometry.get("coordinates")
+        if geometry.get("type") != "Point" or not coordinates:
+            continue
+        lon, lat = float(coordinates[0]), float(coordinates[1])
+        sites.append(
+            BathingWaterSite(
+                name=props[_PROPERTIES["name"]],
+                lat=lat,
+                lon=lon,
+                is_inland=(props[_PROPERTIES["water_type"]] or "").strip() == FRESHWATER_VALUE,
             )
+        )
     inland_count = sum(1 for s in sites if s.is_inland)
-    logger.info("loaded %d badevand sites (%d inland)", len(sites), inland_count)
+    logger.info(
+        "loaded %d open badevand sites (%d inland, %d closed sites skipped)",
+        len(sites),
+        inland_count,
+        closed,
+    )
     return sites
 
 
