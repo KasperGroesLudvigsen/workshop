@@ -23,11 +23,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from screener.config import REPO_ROOT, load_settings
+from screener.fetch.bathing_water import build_badevand_lookup, load_badevand_sites
 from screener.fetch.osm_extract import build_geometry_store
 from screener.score.pipeline import score_listings, sort_scored_listings
 from screener.site.build import build_site
 
 FIXTURE = Path(__file__).parent.parent / "tests" / "fixtures" / "sample.osm.xml"
+BADEVAND_FIXTURE = Path(__file__).parent.parent / "tests" / "fixtures" / "badevand_sample.csv"
 
 # Synthetic listings: (id, lat, lon, price, size_m2, lot_size_m2, rooms, build_year, address)
 DEMO_LISTINGS = [
@@ -59,8 +61,9 @@ def build_demo_listings() -> list[dict]:
 def main() -> None:
     settings = load_settings()
     store = build_geometry_store(FIXTURE)
+    badevand_lookup = build_badevand_lookup(load_badevand_sites(BADEVAND_FIXTURE))
     listings = build_demo_listings()
-    scored = score_listings(listings, store, settings)
+    scored = score_listings(listings, store, settings, badevand_lookup=badevand_lookup)
     scored = sort_scored_listings(scored)
 
     out_path = REPO_ROOT / "data" / "site" / "index.html"

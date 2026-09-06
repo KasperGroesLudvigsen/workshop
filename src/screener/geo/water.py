@@ -44,13 +44,18 @@ from screener.geo.store import GeometryStore
 BEACH_SHORE_TOUCH_M = 25.0
 DEFAULT_LAKE_SEARCH_RADIUS_KM = 20.0
 
-BadevandLookup = Callable[[dict], bool]
+BadevandLookup = Callable[[dict, BaseGeometry], bool]
+"""(lake_record, lake_geom_projected) -> is this lake an officially
+designated bathing water? Takes the geometry, not just the record, because
+matching is spatial (is a designated site's point on/near this polygon?) —
+name-string matching between OSM and the official dataset is not reliable
+enough to trust for a hard-filter-adjacent signal."""
 
 
-def no_badevand_data(_lake_record: dict) -> bool:
-    """Default badevand lookup: always "not designated". Replaced in M4
-    with a real lookup against the Miljoestyrelsen/EEA bathing-water
-    dataset once that's integrated."""
+def no_badevand_data(_lake_record: dict, _lake_geom: BaseGeometry) -> bool:
+    """Default badevand lookup: always "not designated". Replaced by
+    ``fetch.bathing_water.build_badevand_lookup`` once the real dataset is
+    loaded (see that module for why it isn't wired in by default)."""
     return False
 
 
@@ -76,7 +81,7 @@ class WaterResult:
 def _lake_eligibility(
     store: GeometryStore, lake_geom: BaseGeometry, lake_record: dict, badevand_lookup: BadevandLookup
 ) -> tuple[bool, str]:
-    if badevand_lookup(lake_record):
+    if badevand_lookup(lake_record, lake_geom):
         return True, "badevand"
     if store.swimming_area.intersecting(lake_geom):
         return True, "swimming_area"

@@ -59,7 +59,7 @@ def test_badevand_lookup_overrides_osm_signals():
     store = _store()
     lat, lon = 55.426166, 11.518141  # the isolated lake, no OSM eligibility signal
 
-    def badevand_lookup(record):
+    def badevand_lookup(record, geom):
         return record.get("name") == "Ensom So"
 
     result = compute_water(
