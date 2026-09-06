@@ -14,11 +14,39 @@ def test_build_geometry_store_extracts_all_categories():
     store = build_geometry_store(FIXTURE)
     assert len(store.coastline) == 1
     assert len(store.beach) == 1
-    assert len(store.lake) == 3  # big lake + small pond + isolated ineligible lake
+    assert len(store.lake) == 4  # big lake + pond + isolated lake + multipolygon relation
     assert len(store.marina) == 1
     assert len(store.playground) == 1
     assert len(store.pool) == 1
     assert len(store.swimming_area) == 1
+
+
+def test_multipolygon_relation_lake_is_assembled():
+    """Denmark's three largest lakes — Arreso, Esrum So and Fureso — are all
+    mapped as multipolygon relations, and all three sit in this project's
+    target postal range. An extractor that only treats closed ways as
+    polygons drops them silently: on the real Denmark extract that was 266
+    lakes over the area filter instead of 386. This is the regression guard.
+    """
+    store = build_geometry_store(FIXTURE)
+    by_name = {r["name"]: r for r in store.lake.records}
+
+    assert "Relations So" in by_name, "multipolygon relation lake was dropped"
+    relation_lake = by_name["Relations So"]
+    assert relation_lake["kind"] == "relation"
+    # Its outer ring is split across two untagged ways, so it cannot be
+    # picked up as a closed way — only real area assembly finds it.
+    assert relation_lake["area_ha"] == _approx(20.3, tol=0.5)
+
+
+def test_closed_ways_are_not_double_counted():
+    """Closed ways are emitted both as ways and as assembled areas. Taking
+    both would silently duplicate every lake, beach and marina."""
+    store = build_geometry_store(FIXTURE)
+
+    names = [r["name"] for r in store.lake.records]
+    assert len(names) == len(set(names))
+    assert len(store.swimming_area) == 1  # a closed way, counted once
 
 
 def test_lake_area_ha_computed_and_filters_small_pond():

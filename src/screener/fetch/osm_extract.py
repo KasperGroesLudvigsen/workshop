@@ -14,11 +14,20 @@ unreachable from the environment this was first run in, while OSM France
 served the full extract). Either can be passed to
 ``download_country_extract`` explicitly.
 
-Known simplification: only simple *closed ways* are treated as polygons.
-Multipolygon *relations* (a minority of large/complex lakes, assembled from
-multiple ways with inner/outer roles) are not assembled here and are
-skipped with a count logged — revisit with ``osmium.area.MultipolygonManager``
-if this turns out to drop real lakes in the target region.
+Areas are assembled with osmium's area builder (``FileProcessor.with_areas``)
+rather than by treating closed ways as polygons. That distinction is not
+cosmetic: Denmark's three largest lakes — Arreso (3,957 ha), Esrum So
+(1,735 ha) and Fureso (937 ha) — are all mapped as multipolygon *relations*,
+so a way-only extractor drops them. Measured on the real Denmark extract,
+way-only found 266 lakes over the 5 ha filter; assembling areas finds 386,
+and 410 lakes come from relations. All three missing lakes sit in North
+Zealand, inside this project's target postal range.
+
+Because the assembler emits an ``Area`` for every closed way with area tags
+*and* for every multipolygon relation, area-shaped features are collected
+only from areas; ways contribute only genuinely linear features (coastline,
+and beaches/marinas mapped as open ways). Collecting both would double-count
+every closed way.
 """
 from __future__ import annotations
 
@@ -29,11 +38,14 @@ from typing import Any, NamedTuple
 import osmium
 import requests
 import shapely.geometry as sg
+import shapely.wkb as swkb
 
 from screener.geo.projection import geom_to_projected
 from screener.geo.store import GeometryStore, Layer
 
 logger = logging.getLogger(__name__)
+
+_WKB_FACTORY = osmium.geom.WKBFactory()
 
 GEOFABRIK_DENMARK_URL = "https://download.geofabrik.de/europe/denmark-latest.osm.pbf"
 OSMFR_DENMARK_URL = "https://download.openstreetmap.fr/extracts/europe/denmark.osm.pbf"
@@ -77,20 +89,24 @@ def download_country_extract(dest_path: Path | str, urls: tuple[str, ...] = DENM
 download_geofabrik_extract = download_country_extract
 
 
-def _way_tags(w: "osmium.osm.Way") -> dict[str, str]:
-    return {tag.k: tag.v for tag in w.tags}
+def _tags(obj) -> dict[str, str]:
+    return {tag.k: tag.v for tag in obj.tags}
 
 
-def _node_tags(n: "osmium.osm.Node") -> dict[str, str]:
-    return {tag.k: tag.v for tag in n.tags}
+def _record(name: str | None, osm_id: int, kind: str) -> dict[str, Any]:
+    return {"name": name, "osm_id": osm_id, "kind": kind}
 
 
-class OsmHandler(osmium.SimpleHandler):
-    """Collects raw (WGS84) geometries per category. Call
-    ``handler.apply_file(path, locations=True)`` to run it."""
+def _is_lake(tags: dict[str, str]) -> bool:
+    return (tags.get("natural") == "water" and tags.get("water") == "lake") or tags.get(
+        "landuse"
+    ) == "reservoir"
+
+
+class _Collector:
+    """Accumulates raw (WGS84) geometries per category."""
 
     def __init__(self) -> None:
-        super().__init__()
         self.coastline: list[RawFeature] = []
         self.beach: list[RawFeature] = []
         self.lake: list[RawFeature] = []
@@ -98,30 +114,36 @@ class OsmHandler(osmium.SimpleHandler):
         self.playground: list[RawFeature] = []
         self.pool: list[RawFeature] = []
         self.swimming_area: list[RawFeature] = []
-        self.skipped_open_water_ways = 0
+        self.unbuildable_areas = 0
 
-    # -- nodes ---------------------------------------------------------
+    # -- nodes -----------------------------------------------------------
 
-    def node(self, n: "osmium.osm.Node") -> None:
-        tags = _node_tags(n)
+    def add_node(self, n: "osmium.osm.Node") -> None:
+        tags = _tags(n)
         if not tags or not n.location.valid():
             return
         point = sg.Point(n.location.lon, n.location.lat)
-        name = tags.get("name")
+        record = _record(tags.get("name"), n.id, "node")
         leisure = tags.get("leisure")
         if leisure == "marina":
-            self.marina.append(RawFeature(point, {"name": name, "osm_id": n.id, "kind": "node"}))
+            self.marina.append(RawFeature(point, record))
         elif leisure == "playground":
-            self.playground.append(RawFeature(point, {"name": name, "osm_id": n.id, "kind": "node"}))
+            self.playground.append(RawFeature(point, record))
         elif leisure == "swimming_pool" and tags.get("access") != "private":
-            self.pool.append(RawFeature(point, {"name": name, "osm_id": n.id, "kind": "node"}))
+            self.pool.append(RawFeature(point, record))
         elif tags.get("natural") == "beach":
-            self.beach.append(RawFeature(point, {"name": name, "osm_id": n.id, "kind": "node"}))
+            self.beach.append(RawFeature(point, record))
 
     # -- ways ------------------------------------------------------------
 
-    def way(self, w: "osmium.osm.Way") -> None:
-        tags = _way_tags(w)
+    def add_way(self, w: "osmium.osm.Way") -> None:
+        """Linear features only.
+
+        A closed way with area tags is emitted separately as an ``Area``, so
+        taking it here as well would double-count it. Coastline is the one
+        category that is inherently linear and never an area.
+        """
+        tags = _tags(w)
         if not tags:
             return
         try:
@@ -131,31 +153,65 @@ class OsmHandler(osmium.SimpleHandler):
         if len(coords) < 2:
             return
         is_closed = len(coords) >= 4 and coords[0] == coords[-1]
-        name = tags.get("name")
-        record = {"name": name, "osm_id": w.id, "kind": "way"}
-        leisure = tags.get("leisure")
+        record = _record(tags.get("name"), w.id, "way")
 
         if tags.get("natural") == "coastline":
             self.coastline.append(RawFeature(sg.LineString(coords), record))
-        elif tags.get("natural") == "beach":
-            geom = sg.Polygon(coords) if is_closed else sg.LineString(coords)
-            self.beach.append(RawFeature(geom, record))
-        elif (tags.get("natural") == "water" and tags.get("water") == "lake") or tags.get("landuse") == "reservoir":
-            if is_closed:
-                self.lake.append(RawFeature(sg.Polygon(coords), {**record, "tags": tags}))
-            else:
-                self.skipped_open_water_ways += 1
+            return
+        if is_closed:
+            return  # handled as an area
+
+        line = sg.LineString(coords)
+        leisure = tags.get("leisure")
+        if tags.get("natural") == "beach":
+            self.beach.append(RawFeature(line, record))
         elif leisure == "marina":
-            geom = sg.Polygon(coords) if is_closed else sg.LineString(coords)
+            self.marina.append(RawFeature(line, record))
+        elif leisure == "playground":
+            self.playground.append(RawFeature(line, record))
+        elif leisure == "swimming_pool" and tags.get("access") != "private":
+            self.pool.append(RawFeature(line, record))
+        elif leisure == "swimming_area":
+            self.swimming_area.append(RawFeature(line, record))
+
+    # -- areas -----------------------------------------------------------
+
+    def add_area(self, a: "osmium.osm.Area") -> None:
+        """Closed ways *and* multipolygon relations, already assembled."""
+        tags = _tags(a)
+        if not tags:
+            return
+        leisure = tags.get("leisure")
+        if not (
+            _is_lake(tags)
+            or tags.get("natural") == "beach"
+            or leisure in {"marina", "playground", "swimming_area"}
+            or (leisure == "swimming_pool" and tags.get("access") != "private")
+        ):
+            return
+        try:
+            geom = swkb.loads(_WKB_FACTORY.create_multipolygon(a), hex=True)
+        except Exception:
+            # Broken rings happen in real extracts; count them rather than
+            # dropping them silently, which is the failure this pass exists
+            # to fix in the first place.
+            self.unbuildable_areas += 1
+            return
+
+        # Area ids are synthetic (2*way_id, or 2*relation_id+1); the original
+        # id is more useful for tracing a feature back to OSM.
+        record = _record(tags.get("name"), a.orig_id(), "way" if a.from_way() else "relation")
+        if _is_lake(tags):
+            self.lake.append(RawFeature(geom, {**record, "tags": tags}))
+        elif tags.get("natural") == "beach":
+            self.beach.append(RawFeature(geom, record))
+        elif leisure == "marina":
             self.marina.append(RawFeature(geom, record))
         elif leisure == "playground":
-            geom = sg.Polygon(coords) if is_closed else sg.LineString(coords)
             self.playground.append(RawFeature(geom, record))
-        elif leisure == "swimming_pool" and tags.get("access") != "private":
-            geom = sg.Polygon(coords) if is_closed else sg.LineString(coords)
+        elif leisure == "swimming_pool":
             self.pool.append(RawFeature(geom, record))
         elif leisure == "swimming_area":
-            geom = sg.Polygon(coords) if is_closed else sg.LineString(coords)
             self.swimming_area.append(RawFeature(geom, record))
 
 
@@ -173,22 +229,43 @@ def _build_layer(features: list[RawFeature], *, compute_area: bool = False) -> L
 
 
 def build_geometry_store(osm_path: Path | str) -> GeometryStore:
-    handler = OsmHandler()
-    handler.apply_file(str(osm_path), locations=True)
-    if handler.skipped_open_water_ways:
+    """Single pass over the extract, assembling areas as it goes.
+
+    Note the input must have ascending ids per object type — every real OSM
+    extract does, but a hand-built fixture can easily not, and the assembler
+    raises rather than quietly mis-assembling.
+    """
+    collector = _Collector()
+    processor = osmium.FileProcessor(str(osm_path)).with_areas().with_locations()
+    for obj in processor:
+        if isinstance(obj, osmium.osm.Area):
+            collector.add_area(obj)
+        elif isinstance(obj, osmium.osm.Node):
+            collector.add_node(obj)
+        elif isinstance(obj, osmium.osm.Way):
+            collector.add_way(obj)
+
+    if collector.unbuildable_areas:
         logger.warning(
-            "skipped %d water/reservoir ways that weren't simple closed ways "
-            "(likely multipolygon relation members) — not assembled in this pass",
-            handler.skipped_open_water_ways,
+            "%d areas could not be assembled into valid geometry and were dropped",
+            collector.unbuildable_areas,
         )
+    from_relations = sum(1 for _, record in collector.lake if record.get("kind") == "relation")
+    logger.info(
+        "extracted %d lakes (%d from multipolygon relations), %d coastline, %d beach, "
+        "%d marina, %d playground, %d pool, %d swimming_area",
+        len(collector.lake), from_relations, len(collector.coastline), len(collector.beach),
+        len(collector.marina), len(collector.playground), len(collector.pool),
+        len(collector.swimming_area),
+    )
     return GeometryStore(
-        coastline=_build_layer(handler.coastline),
-        beach=_build_layer(handler.beach),
-        lake=_build_layer(handler.lake, compute_area=True),
-        marina=_build_layer(handler.marina),
-        playground=_build_layer(handler.playground),
-        pool=_build_layer(handler.pool),
-        swimming_area=_build_layer(handler.swimming_area),
+        coastline=_build_layer(collector.coastline),
+        beach=_build_layer(collector.beach),
+        lake=_build_layer(collector.lake, compute_area=True),
+        marina=_build_layer(collector.marina),
+        playground=_build_layer(collector.playground),
+        pool=_build_layer(collector.pool),
+        swimming_area=_build_layer(collector.swimming_area),
     )
 
 
