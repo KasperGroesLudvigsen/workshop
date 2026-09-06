@@ -7,11 +7,12 @@ public pool, and OSM ``leisure=swimming_area`` (a lake-eligibility signal
 used in M4). These are geometry, not businesses — the brief notes staleness
 isn't a concern here the way it is for CVR/OSM POI businesses.
 
-``download_geofabrik_extract`` cannot be exercised in this sandbox (outbound
-network access here is restricted to package registries — see the module
-docstring in ``fetch/boliga.py`` for the same constraint). It is written
-against Geofabrik's plain, stable download URL scheme and should be run for
-real from the deployment box or a networked dev machine.
+Two country-extract mirrors are configured. Geofabrik is the default and the
+one to prefer when it is reachable; OSM France publishes the same country
+extracts and is the fallback for networks where Geofabrik is blocked (it was
+unreachable from the environment this was first run in, while OSM France
+served the full extract). Either can be passed to
+``download_country_extract`` explicitly.
 
 Known simplification: only simple *closed ways* are treated as polygons.
 Multipolygon *relations* (a minority of large/complex lakes, assembled from
@@ -35,6 +36,10 @@ from screener.geo.store import GeometryStore, Layer
 logger = logging.getLogger(__name__)
 
 GEOFABRIK_DENMARK_URL = "https://download.geofabrik.de/europe/denmark-latest.osm.pbf"
+OSMFR_DENMARK_URL = "https://download.openstreetmap.fr/extracts/europe/denmark.osm.pbf"
+
+#: Tried in order by :func:`download_country_extract`.
+DENMARK_EXTRACT_MIRRORS = (GEOFABRIK_DENMARK_URL, OSMFR_DENMARK_URL)
 
 
 class RawFeature(NamedTuple):
@@ -42,15 +47,34 @@ class RawFeature(NamedTuple):
     record: dict[str, Any]
 
 
-def download_geofabrik_extract(dest_path: Path | str, url: str = GEOFABRIK_DENMARK_URL) -> Path:
+def download_country_extract(dest_path: Path | str, urls: tuple[str, ...] = DENMARK_EXTRACT_MIRRORS) -> Path:
+    """Download the country extract, trying each mirror in turn.
+
+    Falls through to the next mirror on any network-level failure, and
+    raises the last error if every mirror fails — never leaves a partial
+    file behind that a later osmium read would choke on.
+    """
     dest = Path(dest_path)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    with requests.get(url, stream=True, timeout=120) as resp:
-        resp.raise_for_status()
-        with open(dest, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=1 << 20):
-                f.write(chunk)
-    return dest
+    last_error: Exception | None = None
+    for url in urls:
+        logger.info("downloading OSM extract from %s", url)
+        try:
+            with requests.get(url, stream=True, timeout=120) as resp:
+                resp.raise_for_status()
+                with open(dest, "wb") as f:
+                    for chunk in resp.iter_content(chunk_size=1 << 20):
+                        f.write(chunk)
+            return dest
+        except requests.RequestException as exc:
+            logger.warning("mirror %s failed: %s", url, exc)
+            dest.unlink(missing_ok=True)
+            last_error = exc
+    raise RuntimeError(f"every OSM extract mirror failed; last error: {last_error}")
+
+
+#: Kept as the old name so existing callers/scripts don't break.
+download_geofabrik_extract = download_country_extract
 
 
 def _way_tags(w: "osmium.osm.Way") -> dict[str, str]:
@@ -176,13 +200,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--pbf", type=Path, default=REPO_ROOT / "data" / "denmark-latest.osm.pbf")
     parser.add_argument("--out", type=Path, default=REPO_ROOT / "data" / "osm_store.pkl")
-    parser.add_argument("--download", action="store_true", help="download the Geofabrik extract first")
+    parser.add_argument("--download", action="store_true", help="download the country extract first")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO)
     if args.download:
-        logger.info("downloading %s -> %s", GEOFABRIK_DENMARK_URL, args.pbf)
-        download_geofabrik_extract(args.pbf)
+        download_country_extract(args.pbf)
     store = build_geometry_store(args.pbf)
     store.save(args.out)
     logger.info("saved geometry store to %s", args.out)

@@ -1,23 +1,25 @@
 # Handoff — Summer House Screener
 
-Read this first if you're picking this project back up. It's written for a fresh Claude
-session with no memory of the conversation that built this — probably you, on desktop, with
-real internet access. That last part matters: **the session that wrote this code had almost
-no internet egress** (only PyPI/npm/GitHub/the Anthropic API were reachable — not boliga.dk,
-not download.geofabrik.de, not cvrapi.dk, not even example.com). Everything below that says
-"unverified" means exactly that: written carefully against documented/plausible shapes and
-isolated behind one clean seam, but never actually hit a real server. Your first and highest-
-value job is closing those gaps now that you can actually reach the internet.
+Read this first if you're picking this project back up. This is the "what's actually true
+right now" status report; `docs/PLAN.md` has the milestone detail.
+
+**What changed in this session**: the previous build session had almost no internet egress,
+so five external data sources were written against documented-or-guessed shapes and never
+hit a real server. Four of those five are now verified against live services, and the code
+changed where reality disagreed with the guess. The fifth (Boliga) is blocked for an
+environment reason, not a design reason — details below.
 
 ## tl;dr
 
-- Branch: `claude/summer-house-screener-plan-xpq7u6` on `KasperGroesLudvigsen/workshop`.
-- M0–M5 done. 49 tests pass. A real, working demo site exists (fixture data, not live data).
+- Branch: `claude/resume-work-handoff-mx75xd` on `KasperGroesLudvigsen/workshop`.
+- M0–M5 done. 73 tests pass (was 49).
+- **Address validation is no longer stubbed** — this was the one item blocking M5 from doing
+  anything real, and it now runs against the live Danish address register.
+- **Bathing water** now reads the real PULS register instead of a guessed CSV schema.
+- **cvrapi.dk** had a real bug (a quota block read as "business doesn't exist"); fixed.
+- **Boliga remains unverified** — Cloudflare blocks this environment. It is the only item
+  still needing a machine with ordinary consumer internet.
 - M6–M10 not started.
-- Full milestone detail: `docs/PLAN.md`. This file is the "what's actually true right now"
-  status report and the checklist for what to do next.
-- Nothing here is a design problem — it's a "go verify this against the real internet"
-  problem. Read the "Do these first" section below before writing new code.
 
 ## How to get running
 
@@ -25,164 +27,220 @@ value job is closing those gaps now that you can actually reach the internet.
 cd /path/to/workshop
 uv venv .venv && source .venv/bin/activate
 uv pip install -e ".[dev]"
-PYTHONPATH=src python3 -m pytest tests/ -q          # should show 49 passed
-PYTHONPATH=src python3 jobs/demo_m3.py              # writes data/site/index.html
+PYTHONPATH=src python3 -m pytest tests/ -q          # should show 73 passed
+PYTHONPATH=src python3 jobs/demo_m3.py             # writes data/site/index.html
 ```
 
-Open `data/site/index.html` in a real browser (not headless) — with real internet, Leaflet
-and OSM tiles will actually load, unlike in the build sandbox where the map degraded
-gracefully to "table only". That's expected; it's not a bug to fix.
+The whole test suite runs offline — every external client is driven through an injectable
+transport seam against captured real responses.
 
-## Do these first — verification gaps, in priority order
+## Verified this session
 
-These block real (non-fixture) data from flowing through the pipeline. Each one is isolated
-behind a small, named seam specifically so fixing it doesn't ripple elsewhere.
+### 1. Address validation — DAWA's replacement — RESOLVED ✅
 
-### 1. Boliga API parameters (`src/screener/fetch/boliga.py`)
+This was flagged as "the one genuinely blocking item for M5". It is now implemented and
+measured.
 
-- `_PARAM_NAMES` (line ~40) holds the query parameter names (`zipcodeFrom`, `zipcodeTo`,
-  `page`, `pageSize`, `sort`, `propertyType`) and `_extract_total_count`/`_extract_listings`
-  hold the candidate response-key names (`meta.totalCount`, `results`, etc). These are
-  secondhand (public write-ups about this undocumented API), not verified.
-- `config/thresholds.yaml`'s `boliga_property_type_fritidsbolig` is `null`.
-- **Action**: open boliga.dk, filter to Fritidshus, watch DevTools → Network → Fetch/XHR,
-  and confirm/correct both. Faster alternative that needs no DevTools session at all: call
-  `discover_property_types()` in that same file against an unfiltered search for a mixed
-  postal code — it reads the type code straight off Boliga's own response labels. Either
-  way, set the config value once confirmed, and fix `_PARAM_NAMES`/the key-candidate tuples
-  if reality differs.
-- Also sanity-check `normalize_listing()`'s field-name candidates (`_first_present` calls)
-  against a real response.
+- **DAWA's status**: it has not shut down yet, but it is going. `api.dataforsyningen.dk`
+  still answers and sends `sunset` / `deprecation` headers, and Klimadatastyrelsen has
+  announced **permanent shutdown on 2026-10-01 10:00** — a few weeks from now. Do not build
+  anything new on it. (The previous handoff's "shut down 2026-07-01" was close but early.)
+- **The replacement** is Klimadatastyrelsen's **Adressevaelger**, at `https://adressevaelger.dk`:
+  `GET /adresser/soeg?tekst=…&token=…` to search, `GET /adresser/{id}?token=…` (or
+  `/husnumre/{id}`) for the full record. Its sibling "Adressevask" is the announced
+  replacement for DAWA's *datavask*, but it is not exposed on this host and was not needed:
+  search + record lookup does the job.
+- **New module**: `src/screener/resolve/adressevaelger.py`. It implements the existing
+  `AddressValidator` protocol, so this was the one-class swap the seam was designed for —
+  `resolve/pipeline.py` is untouched.
+- The register returns coordinates in **EPSG:25832**, the same CRS `geo/projection.py`
+  already uses, so no new dependency.
 
-### 2. Real OSM extract (`src/screener/fetch/osm_extract.py`)
+**Measured, not assumed**: 50 real addresses pulled from the national address register
+across ten target postal codes → **50/50 validated, coordinates agreeing to 0.00 m**. Five
+negative cases (wrong town, nonexistent street, nonexistent house number) all correctly
+rejected.
 
-- Never run against real data — only against `tests/fixtures/sample.osm.xml`, a hand-built
-  fixture with real Sjælland coordinates but fake features.
-- **Action**: `python -m screener.fetch.osm_extract --download --pbf data/denmark-latest.osm.pbf --out data/osm_store.pkl`
-  (or call `download_geofabrik_extract` / `build_geometry_store` directly). Sanity-check the
-  resulting `GeometryStore` layer sizes look plausible (thousands of lakes, not zero; a
-  connected coastline, not fragments only in one corner) before trusting it.
-- Known simplification already flagged in the code: only simple closed *ways* become lake
-  polygons; multipolygon *relations* (a minority of large/complex lakes) are skipped with a
-  logged count. Check that count after a real run — if it's large, revisit with
-  `osmium.area.MultipolygonManager`.
+Two things worth knowing before you touch this module:
 
-### 3. Bathing water dataset (`src/screener/fetch/bathing_water.py`)
+- **The search is fuzzy and will happily answer with the wrong town.** "Rentemestervej 8"
+  matches both 2400 København NV and 3400 Hillerød. The validator re-checks postal code *and*
+  house number against the fetched record. Do not remove that check to "improve the hit
+  rate" — it is the entire register gate.
+- **Two query forms are tried, deliberately.** The API's own `postnummer` parameter is
+  accepted and then *ignored* (2400 and 3400 return byte-identical hits), so the postal code
+  can only be steered through the free text — and including it sometimes returns zero hits,
+  while omitting it lets a common street name ("Søvej 1", one in nearly every town) crowd the
+  wanted town past the result cap. Each form alone misses addresses; both together got 50/50.
 
-- `BADEVAND_SOURCE_URL` and `_COLUMNS` (the expected CSV column names) are placeholders —
-  genuinely guessed at a plausible shape, not found via a real download.
-- **Action**: find Miljøstyrelsen's or the EEA's actual current distribution for Danish
-  bathing water designations (badevand.dk, or the EEA's WISE bathing water dataset), update
-  the URL/column mapping, and re-run `load_badevand_sites` against it. `load_badevand_sites`
-  already raises loudly (`KeyError`) if columns don't match — that's intentional, don't
-  soften it, just fix the mapping.
+**Credential note**: the token in `config/thresholds.yaml` is `adressevaelger123`, the demo
+token from Klimadatastyrelsen's own published README. It works today and is fine for
+development. Get a real one before production: <https://confluence.sdfi.dk/display/ADV/Brugerstyring>.
 
-### 4. Address validation — DAWA's replacement (`src/screener/resolve/address_regex.py`)
+### 2. Bathing water dataset — RESOLVED ✅
 
-- **This is the one genuinely blocking item for M5 to do anything for real.** DAWA (Denmark's
-  address API) shut down 2026-07-01. The brief names "Adressevælger" as a possible
-  replacement but the build session's knowledge cutoff (Jan 2026) predates the shutdown, and
-  it had no internet to check what actually replaced it.
-- `AddressValidator` is a `Protocol` (see the class right above `NotConfiguredValidator`);
-  the default implementation raises `NotImplementedError` rather than silently accepting
-  anything. **Action**: find the real replacement service, write a class implementing
-  `.validate(candidate) -> ValidatedAddress | None` against it, and pass instances of it
-  wherever `resolve.pipeline.resolve_business_address(..., validator=...)` is called. Nothing
-  else in `resolve/` needs to change — this is a one-class swap.
+The placeholder `badevand.dk` URL and invented CSV columns are gone. The real source is
+**Danmarks Miljøportal's PULS register**, layer `puls:Badevand`, public GeoServer WFS at
+`https://pulsgeo.miljoeportal.dk/geoserver/wfs`, published CC0. No account needed.
 
-### 5. cvrapi.dk field names (`src/screener/fetch/cvr.py`)
+Verified live: 1,488 features, **1,039 open sites** once stations carrying a `Closed` date
+are dropped, of which **123 are `Ferskvand`** (freshwater — the lake sites this signal exists
+for). That 1,039 independently matches the published count of official Danish bathing sites,
+which is the cross-check that the closed-site filter is right.
 
-- `_parse_company()`'s field-name guesses (`vat`/`cvr`, `names`/`binames`/`secondaryname` for
-  trading names, `zipcode`, `enddate`) are from public documentation/community usage of
-  cvrapi.dk, not a live call.
-- **Action**: make one real `search_by_name` call, compare the actual JSON shape, fix field
-  names if they differ. Also add a real contact identifier to `DEFAULT_USER_AGENT` — it's
-  currently a placeholder string and cvrapi.dk asks callers to identify themselves.
-- **Worth remembering**: cvrapi.dk is a lookup API (name/vat → one record), not a bulk
-  enumeration API. It can validate a candidate hangout/grocery name into an address; it
-  cannot answer "list every hangout in postal code 4200". That enumeration still needs OSM
-  POI extraction and/or M7's web-search gap-fill to produce candidate names first.
+Two plausible alternatives were checked and rejected; they're documented in the module so
+nobody burns another hour on them:
+
+- **EMODnet** `emodnet:bathingwaters` — easy to query and well documented, but it is a
+  *marine* portal. All 27,794 Danish rows are "Coastal Bathing Water" and the layer carries
+  no lake sites for any country, making it exactly useless for a lake-eligibility signal.
+- **Miljøportal's "Badevand: Analyse- og Måleresultater" CSV** — the per-sample E. coli
+  measurement series. No coordinates, and the download is behind an authenticated portal
+  account (401).
+
+### 3. cvrapi.dk — VERIFIED, and a real bug fixed ✅
+
+Field names `vat`, `name`, `address`, `zipcode`, `city`, `enddate` are confirmed against
+cvrapi.dk's own documentation and published response examples. (`vat` is an int and `zipcode`
+may be either — the existing `str()` coercions were right.) The binavne/trading-names key is
+still unconfirmed; all three candidate spellings are still accepted.
+
+**The bug**: cvrapi.dk returns *every* error as **HTTP 200 with an `error` key**. The client
+mapped any `error` key to `CvrNotFoundError`, so `QUOTA_EXCEEDED`, `BANNED` and `INVALID_UA`
+all came back as "no CVR match" — a block silently reading as "this business doesn't exist",
+which is the exact failure mode the Boliga client goes out of its way to refuse. Blocking
+codes now raise `CvrBlockedOrRateLimitedError`; only `NOT_FOUND` / `INVALID_VAT` are misses.
+
+**Two constraints that affect the design, not just the code:**
+
+- **The free allowance is 50 lookups per day, per IP _range_.** This is low enough to be
+  architectural. Resolving a few hundred candidate businesses across Sjælland is *days* of
+  budget. Before M7 does anything at scale, either request a token from cvrapi.dk (they
+  grant higher limits) or revisit the official Erhvervsstyrelsen/Datafordeleren API — the
+  original "cvrapi.dk for low setup cost" decision was made without knowing this number.
+- **Generic user agents are rejected** with `INVALID_UA`. The documented form is
+  `[company] - [project] - [contact name] [phone or email]`. `DEFAULT_USER_AGENT` now carries
+  the template; it must be filled in before any real run.
+
+It could not be called live from here — the shared egress IP range is already over quota
+(`QUOTA_EXCEEDED` on every attempt, from several different IPs). That's an environment
+limitation, not a code problem.
+
+### 4. Real OSM extract — RESOLVED ✅ (via a mirror)
+
+`download.geofabrik.de` is **unreachable from this environment** (connection reset at the
+egress proxy), as is `overpass-api.de` and every public Overpass instance tried.
+`https://download.openstreetmap.fr/extracts/europe/denmark.osm.pbf` serves the same country
+extract and works. `fetch/osm_extract.py` now takes a mirror list and falls through on
+failure, with Geofabrik still first. `download_geofabrik_extract` is kept as an alias so
+nothing that already calls it breaks.
+
+See "Real-extract results" below for the layer counts.
+
+## Still blocked — needs a machine with ordinary internet
+
+### Boliga API parameters (`src/screener/fetch/boliga.py`) ⛔
+
+**Still unverified, and not fixable from a datacenter.** `api.boliga.dk` now sits behind a
+Cloudflare interactive challenge — it answers `403` with `cf-mitigated: challenge` and a
+"Just a moment..." body to every plain client, regardless of User-Agent. Three routes were
+tried:
+
+- `curl_cffi` browser impersonation (what the module is built around): dies at TLS through
+  this environment's MITM proxy — the impersonated fingerprint and the proxy's TLS terminator
+  can't negotiate.
+- Headless Chromium (pre-installed, would pass the challenge): **cannot reach the network
+  through this proxy at all** — `example.com` also fails with `ERR_CONNECTION_RESET`. So
+  this is an environment limitation, not a Boliga one.
+- Plain `requests`/`curl`: gets the challenge page, as expected.
+
+So this needs a normal machine on consumer internet. **What to do there** — unchanged from
+the previous handoff, and still the fastest path:
+
+1. Run `discover_property_types()` in that module against an unfiltered search for a mixed
+   postal code. It reads the type code/label pairs off Boliga's own response, so it needs no
+   DevTools session — just internet that isn't challenged.
+2. Set `boliga_property_type_fritidsbolig` in `config/thresholds.yaml` (still `null`).
+3. Confirm `_PARAM_NAMES` (`zipcodeFrom`/`zipcodeTo`/`page`/`pageSize`/`sort`/`propertyType`)
+   and the response-key candidates in `_extract_total_count`/`_extract_listings`, plus
+   `normalize_listing()`'s field-name candidates, against a real response.
+
+Note that `curl_cffi` impersonation is likely to be *necessary* there too — the Cloudflare
+challenge is real and the module's choice of transport is vindicated, it just can't be
+exercised from here.
+
+## Credentials / access still needed from the user
+
+- **Brave Search API key** — required before M7 can do anything for real.
+- **A real contact string** for the cvrapi.dk User-Agent (`DEFAULT_USER_AGENT` in
+  `fetch/cvr.py`) and the Boliga UA. cvrapi.dk *rejects* generic agents outright.
+- **A cvrapi.dk token, or a decision to switch to the official API** — see the 50/day quota
+  above.
+- **A production Adressevaelger token** — the demo token works but isn't meant for real use.
+- **Hetzner account + server** — needed before M10's deployment steps can run.
+- **ntfy topic name** — trivial, just pick a string.
+- **`ANTHROPIC_API_KEY`** if you want `resolve/llm_extract.py`'s last-resort step to run
+  (`pip install -e ".[llm]"`). Least urgent — steps 1–3 should resolve most businesses.
 
 ## Decisions already made (don't re-litigate without new information)
 
-- **Stack**: Python, shapely 2.0 (STRtree, no separate `rtree` package needed) + pyproj +
-  DuckDB + pyosmium + curl_cffi + Jinja2.
-- **CVR access**: cvrapi.dk (free, no registration) over the official Datafordeleren API
-  (needs a service agreement) — a deliberate low-setup-cost choice, with the
-  lookup-vs-enumeration trade-off noted above.
+- **Stack**: Python, shapely 2.0 (STRtree) + pyproj + DuckDB + pyosmium + curl_cffi + Jinja2.
+- **Address register**: Adressevaelger (see above). DAWA is dead on 2026-10-01.
+- **Bathing water**: Miljøportal PULS `puls:Badevand` WFS (see above).
+- **CVR access**: cvrapi.dk — **but see the 50/day quota finding**, which is new information
+  and is exactly the kind of thing that justifies revisiting it.
 - **Notifications**: ntfy (topic name, no account) over SMTP.
-- **Lake eligibility default**: strict (`lake_strict: true` in config), with both strict and
-  loose always computed so the UI toggle needs no re-score.
+- **Lake eligibility default**: strict (`lake_strict: true`), with both strict and loose
+  always computed so the UI toggle needs no re-score.
 - **Min lake area**: 5 ha, configurable.
-- **Distance function**: straight-line haversine now (`geo/distance.py`), deliberately
-  isolated behind `get_distance_fn()` so a drive-time backend can replace it later.
-- **Build order**: thin vertical slice (M0-M3) before layering in CVR/bathing-water/etc —
-  this succeeded; M3's demo site was real and interactive before any business data existed.
+- **Distance function**: straight-line haversine now (`geo/distance.py`), isolated behind
+  `get_distance_fn()` so a drive-time backend can replace it later.
 
 ## What's not started at all
 
-- **M6 (findsmiley)**: `fetch/findsmiley.py` doesn't exist yet. Should fetch a business's
-  Fødevarestyrelsen inspection report (found via the findsmiley link `resolve/jsonld.py`'s
-  `find_findsmiley_link` already extracts during JSON-LD parsing) and attach inspection date
-  + address cross-check to resolved businesses.
+- **M6 (findsmiley)**: `fetch/findsmiley.py` doesn't exist. Should fetch a business's
+  Fødevarestyrelsen inspection report (found via the link `resolve/jsonld.py`'s
+  `find_findsmiley_link` already extracts) and attach inspection date + address cross-check.
+  `findsmiley.dk` is reachable from here, so this one is not blocked.
 - **M7 (web-search gap-fill)**: `fetch/web_search.py` doesn't exist. Needs a **Brave Search
-  API key** (not yet obtained — get one before starting this). Search per town, not per
-  listing; feed discovered names through the *existing* `resolve/pipeline.py` unchanged —
-  never skip the address-register gate just because a name came from search.
-- **M8 (nightly orchestration)**: `jobs/nightly.py` doesn't exist. Should tie together fetch
-  (M1) → score (M3-M7) → diff against yesterday (use `db.py`'s `save_scored_listings` and
-  `passing_listing_ids`, already implemented) → notify via ntfy on new passes.
-- **M9 (site polish), remainder**: the template (`site/templates/index.html.j2`) already has
-  live typed-input filtering for price/rooms/m²/lot/build-year/the three thresholds/lake-
-  strict, all client-side with no page reload — verified working via headless browser render.
-  Still missing: per-category **minimum-count** filter inputs ("at least 3 hangouts within
-  threshold"), and table columns for every field per the brief ("all columns visible") —
-  address, energy class, days on market, and the four CVR categories that exist in the data
-  schema but aren't columns yet (fish_shop, wine_shop, ice_cream, butcher) are currently
-  absent from the table. Also: everything needs re-testing against real data once items 1-5
-  above are fixed — all current verification used fixtures.
-- **M10 (deployment)**: nothing written. Needs systemd `.service`/`.timer` units for both
-  jobs and a Hetzner runbook (CX22 sizing note, required env vars, one-time manual steps).
-  Actual server provisioning is the user's action, not something to automate.
+  API key**. Search per town, not per listing; feed discovered names through the *existing*
+  `resolve/pipeline.py` unchanged — never skip the address-register gate just because a name
+  came from search.
+- **M8 (nightly orchestration)**: `jobs/nightly.py` doesn't exist. fetch (M1) → score
+  (M3–M7) → diff against yesterday (`db.py`'s `save_scored_listings` / `passing_listing_ids`
+  are already implemented) → notify via ntfy on new passes.
+- **M9 (site polish), remainder**: the template already has live typed-input filtering for
+  price/rooms/m²/lot/build-year/the three thresholds/lake-strict, all client-side. Still
+  missing: per-category **minimum-count** filters ("at least 3 hangouts within threshold"),
+  and table columns for every field per the brief — address, energy class, days on market,
+  and the four CVR categories in the schema but not yet columns (fish_shop, wine_shop,
+  ice_cream, butcher).
+- **M10 (deployment)**: nothing written. systemd `.service`/`.timer` units for both jobs and
+  a Hetzner runbook (CX22 sizing, env vars, one-time manual steps). Server provisioning is
+  the user's action.
 
-## Credentials / access needed from the user (not solvable by writing more code)
-
-- **Brave Search API key** — required before M7 can do anything for real.
-- **Hetzner account + server** — required before M10's deployment steps can be executed
-  (the runbook can be written without it, but not run).
-- **ntfy topic name** — trivial, just needs the user (or you) to pick a string.
-- A real contact email/identifier for the Boliga and cvrapi.dk User-Agent strings — both are
-  currently placeholder text in `fetch/boliga.py` (`_DEFAULT_...`) and `fetch/cvr.py`
-  (`DEFAULT_USER_AGENT`).
-- **`ANTHROPIC_API_KEY`** env var if you want `resolve/llm_extract.py`'s last-resort
-  extraction step to actually run (install the optional `llm` extra: `pip install -e ".[llm]"`).
-  This is the least urgent gap — steps 1-3 of the resolution pipeline should resolve most
-  businesses before this ever triggers.
-
-## Test suite map (49 tests, all passing on fixtures)
+## Test suite map (73 tests, all passing, all offline)
 
 | File | Covers |
 |---|---|
 | `test_boliga.py` | Sharding, 300-cap bisection, truncation assertion, 403 handling, `discover_property_types` |
 | `test_osm_extract.py` | pyosmium extraction, area computation, spatial queries against the synthetic fixture |
-| `test_water.py` | Lake area filtering, eligibility signals (badevand/swimming_area/beach), strict vs. loose divergence |
-| `test_bathing_water.py` | CSV schema validation, spatial site-to-lake matching, coastal sites excluded |
-| `test_cvr.py`, `test_cvr_match.py` | CVR client parsing, fuzzy name matching, closed-business rejection |
+| `test_water.py` | Lake area filtering, eligibility signals, strict vs. loose divergence |
+| `test_bathing_water.py` | PULS GeoJSON parsing, closed-station and "Ukendt" rejection, schema-drift raising, spatial site-to-lake matching |
+| `test_cvr.py`, `test_cvr_match.py` | CVR parsing, fuzzy name matching, closed-business rejection, **quota/ban vs. genuine-miss separation** |
+| `test_adressevaelger.py` | **Register gate**: wrong-town and wrong-house-number rejection, both query forms, coordinate conversion, service errors raising rather than reading as no-match |
 | `test_jsonld.py` | LocalBusiness/PostalAddress extraction, `@graph`-wrapped JSON-LD, findsmiley link extraction |
-| `test_address_regex.py` | Danish address regex, the `NotConfiguredValidator` raising rather than accepting |
-| `test_resolve_pipeline.py` | All 4 resolution steps in order, and — the important one — a hallucinated LLM address being offered to the validator and dropped |
+| `test_address_regex.py` | Danish address regex, `NotConfiguredValidator` raising rather than accepting |
+| `test_resolve_pipeline.py` | All 4 resolution steps in order, and a hallucinated LLM address being offered to the validator and dropped |
 | `test_score_pipeline.py` | End-to-end scoring: water hard filter, OSM categories, business-directory wiring, sort order |
 
-`tests/fixtures/sample.osm.xml` and `tests/fixtures/badevand_sample.csv` are hand-built,
-real-Sjælland-coordinates synthetic data (near Sorø) — useful reference for what a realistic
-lake/coastline/marina layout looks like if you need more fixture data later.
+Fixtures: `sample.osm.xml` (hand-built, real Sjælland coordinates near Sorø),
+`badevand_sample.geojson` and `adressevaelger_sample.json` (real response *shapes* captured
+from the live services).
 
 ## Suggested order for the next session
 
-1. Fix items 1–5 above, in that order (Boliga params fastest/highest-value; DAWA replacement
-   is the one that actually blocks M5 from doing anything real).
-2. Re-run the full test suite — it shouldn't need changes, since it's fixture-based, but
-   confirm nothing broke.
-3. Run `jobs/demo_m3.py`-equivalent against one real postal code shard end to end; eyeball
-   the result against a real map before trusting it further.
-4. M6 → M7 (get the Brave key first) → M8 → M9 remainder → M10.
+1. **Boliga params**, from a machine with ordinary internet — it's the last verification gap
+   and it gates every real listing.
+2. Run the full pipeline on one real postal shard end to end and eyeball it against a map.
+3. M6 (findsmiley — not blocked) → M7 (get the Brave key first) → M8 → M9 remainder → M10.

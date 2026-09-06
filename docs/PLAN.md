@@ -1,8 +1,10 @@
 # Summer House Location Screener — Build Plan
 
 > Status as of the last update: **M0–M5 done and pushed**, M6–M10 not started.
-> See `docs/HANDOFF.md` for the detailed status report, what's verified vs.
-> stubbed, and what's needed to keep going.
+> Four of the five external data sources are now **verified against live
+> services**; Boliga is the one remaining gap and is blocked by Cloudflare
+> rather than by design. See `docs/HANDOFF.md` for the detailed status
+> report and what's needed to keep going.
 
 ## Context
 
@@ -28,13 +30,14 @@ in CVR business resolution, bathing-water eligibility, findsmiley, and web-searc
     boliga.py              # sharded search + detail-endpoint client, rate-limited, curl_cffi
     osm_extract.py         # Geofabrik download + osmium/pyosmium filtering into a local spatial store
     cvr.py                 # cvrapi.dk lookup client (name/vat search)
-    bathing_water.py       # Miljøstyrelsen/EEA badevand dataset pull + spatial lake matching
+    bathing_water.py       # Miljøportal PULS badevand WFS pull + spatial lake matching
     findsmiley.py          # NOT STARTED — per-business inspection report fetch (M6)
     web_search.py          # NOT STARTED — Brave search, per-town discovery (M7)
   /resolve                 # business name -> validated address pipeline (fixed, non-agentic)
     cvr_match.py           # step 1: fuzzy name match incl. binavne/trading names
     jsonld.py              # step 2: LocalBusiness/PostalAddress parse + findsmiley link-follow
     address_regex.py       # step 3: candidate extraction + address-register validation
+    adressevaelger.py      # the AddressValidator implementation (Klimadatastyrelsen)
     llm_extract.py         # step 4: last-resort structured extraction (Anthropic API)
     pipeline.py            # orchestrates 1->4, stopping at first validated hit; loud discard on total failure
   /geo
@@ -59,7 +62,7 @@ in CVR business resolution, bathing-water eligibility, findsmiley, and web-searc
   static_prep.py           # NOT STARTED — monthly/on-demand: OSM index, CVR pull+resolve, bathing-water pull (M8-ish)
   nightly.py               # NOT STARTED — Boliga fetch -> score -> diff -> notify (M8)
 /deploy                    # NOT STARTED — systemd units + Hetzner runbook (M10)
-/tests                     # 49 tests, all passing
+/tests                     # 73 tests, all passing, all offline
 ```
 
 ## Key design decisions (carried from the brief, made concrete)
@@ -99,35 +102,41 @@ in CVR business resolution, bathing-water eligibility, findsmiley, and web-searc
 **M0 — Scaffolding.** ✅ Done. `pyproject.toml`, `config/thresholds.yaml`, `db.py` (DuckDB
 raw-response cache + scored-listings table), `config.py` (typed settings loader).
 
-**M1 — Boliga fetch.** ✅ Done, **params unverified live**. Postal-range sharding with
+**M1 — Boliga fetch.** ✅ Done, **params still unverified live**. Postal-range sharding with
 recursive bisection on the results cap, loud 403 handling, rate limiting, curl_cffi
-transport — all tested via an injectable fake transport. Parameter names and the
-fritidsbolig type code could not be confirmed against the live API (no internet egress in
-the build sandbox) — see `docs/HANDOFF.md` for exactly what needs checking.
+transport — all tested via an injectable fake transport. `api.boliga.dk` now sits behind a
+Cloudflare interactive challenge, which confirms the choice of a browser-impersonating
+transport but also means the parameters can only be confirmed from a machine on ordinary
+consumer internet — see `docs/HANDOFF.md`.
 
-**M2 — OSM static prep.** ✅ Done, **never run against real Geofabrik data**. pyosmium
+**M2 — OSM static prep.** ✅ Done, **run against the real Denmark extract**. pyosmium
 extraction into a projected (EPSG:25832), STRtree-indexed `GeometryStore` covering
-coastline/beach/lake/reservoir/marina/playground/pool/swimming_area. Tested against a
-synthetic-but-real-coordinates OSM fixture (`tests/fixtures/sample.osm.xml`), not a real
-Denmark extract.
+coastline/beach/lake/reservoir/marina/playground/pool/swimming_area. Geofabrik is
+unreachable from some networks (including the one this was run on), so
+`download_country_extract` now takes a mirror list and falls through — OSM France
+serves the same country extract.
 
 **M3 — First runnable slice.** ✅ Done. Water scoring + OSM-backed amenity categories wired
 through `score/pipeline.py` into a Leaflet+table static site (`jobs/demo_m3.py` generates a
 real, openable `data/site/index.html`). Verified with a headless-browser render: table
 population, live sort, live threshold filtering, and the strict/loose lake toggle.
 
-**M4 — Lake eligibility.** ✅ Done, **badevand dataset schema/URL unverified**.
-`fetch/bathing_water.py` spatially matches designated bathing-water sites to lake polygons
-(not by name — names differ between OSM and official sources). OSM `swimming_area` and
-beach-on-shore detection work against real OSM data once M2's extract is real.
+**M4 — Lake eligibility.** ✅ Done, **badevand source verified live**.
+`fetch/bathing_water.py` reads Danmarks Miljøportal's PULS register (`puls:Badevand` WFS,
+CC0): 1,039 open sites, 123 of them freshwater. It spatially matches designated sites to
+lake polygons (not by name — names differ between OSM and official sources). EMODnet was
+evaluated and rejected as marine-only; see the module docstring.
 
-**M5 — CVR + business resolution.** ✅ Done, **cvrapi.dk field names unverified live, and
-it can't do bulk discovery** (see `docs/HANDOFF.md` — it's a lookup API, not an enumeration
-API; discovery of *candidate* names still needs OSM POIs or M7's web-search gap-fill).
-`resolve/pipeline.py` implements all 4 steps with the address-register validation gate;
-`AddressValidator` defaults to a stub that raises, since DAWA's 2026-07-01 replacement is
-unconfirmed. `score/pipeline.py` enforces hangout/grocery as real hard filters once a
-business directory is supplied.
+**M5 — CVR + business resolution.** ✅ Done, **and no longer stubbed**. The
+`AddressValidator` gate is implemented against Klimadatastyrelsen's Adressevaelger — DAWA's
+confirmed replacement, DAWA itself closing 2026-10-01 — and measured at 50/50 on real
+addresses with 0.00 m coordinate error. `resolve/pipeline.py` implements all 4 steps behind
+that gate, unchanged by the swap.
+
+Two constraints on the CVR side, both new information: cvrapi.dk allows only **50 lookups
+per day per IP range**, which is tight enough to justify revisiting the choice against the
+official Erhvervsstyrelsen API; and it remains a *lookup* API, not an enumeration API, so
+discovery of candidate names still needs OSM POIs or M7's web-search gap-fill.
 
 **M6 — findsmiley.** ⬜ Not started. Attach inspection date + address cross-check as a
 freshness/secondary signal on food businesses already resolved in M5.
@@ -154,23 +163,27 @@ provisioning happens on the user's side.
 
 ## Explicitly flagged gaps
 
-See `docs/HANDOFF.md` for the full, current list with exact file/line pointers — it
-supersedes the version of this list from earlier in the build, since some items resolved
-(bathing water, CVR access decision) and the core constraint (no internet egress) turned out
-to be broader than just the Boliga DevTools problem.
+See `docs/HANDOFF.md` for the full, current list with exact file/line pointers. As of the
+latest session only **one** external gap remains — Boliga's parameters, blocked by
+Cloudflare rather than by any design question. The address register, bathing water, CVR
+schema and the OSM extract are all verified against live services.
 
 ## Verification
 
 - M1: run fetch for one postal shard, confirm raw JSON persisted, confirm 403 raises loudly,
   confirm count-vs-total assertion fires on a truncated fixture. **Done against fakes; redo
-  against the live API once params are confirmed.**
+  against the live API once params are confirmed (blocked by Cloudflare — needs a normal
+  machine).**
 - M3: run the full slice on real data for one postal range, open the generated `index.html`
   locally, confirm pins + table match a handful of listings checked by hand against a map.
   **Done against fixtures; redo with real Boliga+OSM data.**
 - M4: unit-test `eligibility_reason` assignment against constructed fixtures for each of the
-  three signals plus the "none" case. **Done.**
+  three signals plus the "none" case. **Done**, plus closed-station and unknown-water-type
+  rejection against the real register's vocabulary.
 - M5: unit tests for `resolve/pipeline.py` covering each of the 4 steps succeeding/failing in
-  order, and the "never geocode raw LLM output" gate. **Done.**
+  order, and the "never geocode raw LLM output" gate. **Done.** The validator itself is
+  additionally measured against 50 real register addresses (50/50, 0.00 m) and 5 negative
+  cases, and unit-tested offline against captured responses.
 - M8: run `jobs/nightly.py` twice back-to-back with no new listings and confirm no
   notification fires; then inject a synthetic new-passing listing and confirm it does.
 - M9: manually exercise the site — change the hangout radius input and confirm both the
