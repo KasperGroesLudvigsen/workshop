@@ -114,10 +114,9 @@ codes now raise `CvrBlockedOrRateLimitedError`; only `NOT_FOUND` / `INVALID_VAT`
 **Two constraints that affect the design, not just the code:**
 
 - **The free allowance is 50 lookups per day, per IP _range_.** This is low enough to be
-  architectural. Resolving a few hundred candidate businesses across Sjælland is *days* of
-  budget. Before M7 does anything at scale, either request a token from cvrapi.dk (they
-  grant higher limits) or revisit the official Erhvervsstyrelsen/Datafordeleren API — the
-  original "cvrapi.dk for low setup cost" decision was made without knowing this number.
+  architectural — resolving a few hundred candidate businesses across Sjælland is *days* of
+  budget. See "Recommended: switch to the official CVR API" below; this changes the original
+  "cvrapi.dk for low setup cost" decision, which was made without knowing this number.
 - **Generic user agents are rejected** with `INVALID_UA`. The documented form is
   `[company] - [project] - [contact name] [phone or email]`. `DEFAULT_USER_AGENT` now carries
   the template; it must be filled in before any real run.
@@ -125,6 +124,49 @@ codes now raise `CvrBlockedOrRateLimitedError`; only `NOT_FOUND` / `INVALID_VAT`
 It could not be called live from here — the shared egress IP range is already over quota
 (`QUOTA_EXCEEDED` on every attempt, from several different IPs). That's an environment
 limitation, not a code problem.
+
+### 3b. Recommended: switch to the official CVR API ⚠️ needs one email from you
+
+Investigated this session because the 50/day quota makes cvrapi.dk unusable at the scale
+this project needs. **The official Erhvervsstyrelsen distribution solves both of the
+problems the plan flagged, not just the quota one.**
+
+- **Endpoint**: `http://distribution.virk.dk/cvr-permanent` (Elasticsearch 1.7.4, HTTP only
+  — no HTTPS). Confirmed reachable: it answers `401 Authorization Required`, so the host and
+  index name are right and only credentials are missing.
+- **Auth**: HTTP Basic. **Free.** Request credentials by emailing `cvrselvbetjening@erst.dk`;
+  they issue a username/password and ask you to sign a declaration about handling
+  advertisement-protected (*reklamebeskyttede*) entities.
+- **It enumerates.** This is the important part. The plan notes cvrapi.dk "cannot answer
+  'list every hangout in postal code 4200'" and that discovery therefore needs OSM POIs or
+  M7's web search. The official API answers exactly that query:
+
+  | Need | Field path |
+  |---|---|
+  | industry code | `VrproduktionsEnhed.hovedbranche.branchekode` |
+  | postal code | `VrproduktionsEnhed.beliggenhedsadresse.postnummer` |
+
+  with the scroll API for result sets over 3,000.
+
+- **Use the `produktionsenhed` index, not `virksomhed`.** A production unit (P-number) is a
+  *physical site* with its own address; a company (CVR number) is a legal entity. A
+  supermarket chain is one company and hundreds of shops — and this project cares about
+  shops. 2,787,126 production units vs. 2,194,982 companies.
+
+**Why this matters beyond cost**: if CVR can enumerate by industry code and postal code,
+it becomes the discovery mechanism the original brief assumed it was, which likely shrinks
+or removes M7's dependency on a Brave Search API key you do not yet have.
+
+**Not yet implemented** — deliberately. The whole lesson of this session is that writing a
+client against an unverified shape costs more than it saves, and this one cannot be verified
+without credentials. `resolve/cvr_match.py`'s interface is the seam; swapping the client
+behind it is the same shape of change as the address validator turned out to be. Send the
+email, and the client can be built and measured against the real thing.
+
+Relevant DB07 industry codes to confirm once you have access: 471110 (købmænd/døgnkiosker),
+471120 (supermarkeder), 471130 (discountforretninger), 472200 (slagter), 472300
+(fiskeforretninger), 472500 (vinforretninger), 561010 (restauranter), 563000 (caféer,
+værtshuse).
 
 ### 4. Real OSM extract — RESOLVED ✅ (via a mirror)
 
@@ -174,8 +216,9 @@ exercised from here.
 - **Brave Search API key** — required before M7 can do anything for real.
 - **A real contact string** for the cvrapi.dk User-Agent (`DEFAULT_USER_AGENT` in
   `fetch/cvr.py`) and the Boliga UA. cvrapi.dk *rejects* generic agents outright.
-- **A cvrapi.dk token, or a decision to switch to the official API** — see the 50/day quota
-  above.
+- **CVR credentials** — email `cvrselvbetjening@erst.dk` for free Basic-auth access to the
+  official distribution. This is the single highest-value credential to request: it removes
+  the 50/day quota *and* unlocks enumeration by industry + postal code. See §3b.
 - **A production Adressevaelger token** — the demo token works but isn't meant for real use.
 - **Hetzner account + server** — needed before M10's deployment steps can run.
 - **ntfy topic name** — trivial, just pick a string.
