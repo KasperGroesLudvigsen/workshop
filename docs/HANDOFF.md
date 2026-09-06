@@ -157,6 +157,10 @@ problems the plan flagged, not just the quota one.**
 it becomes the discovery mechanism the original brief assumed it was, which likely shrinks
 or removes M7's dependency on a Brave Search API key you do not yet have.
 
+**To request access**: see `docs/CVR_ACCESS.md` — it has the email ready to send, what the
+reklamebeskyttelse declaration commits you to, the HTTP-only security caveat, and the
+fallbacks. Expect **a couple of weeks** for credentials, so this is the long pole.
+
 **Not yet implemented** — deliberately. The whole lesson of this session is that writing a
 client against an unverified shape costs more than it saves, and this one cannot be verified
 without credentials. `resolve/cvr_match.py`'s interface is the seam; swapping the client
@@ -252,8 +256,9 @@ exercised from here.
 - **A real contact string** for the cvrapi.dk User-Agent (`DEFAULT_USER_AGENT` in
   `fetch/cvr.py`) and the Boliga UA. cvrapi.dk *rejects* generic agents outright.
 - **CVR credentials** — email `cvrselvbetjening@erst.dk` for free Basic-auth access to the
-  official distribution. This is the single highest-value credential to request: it removes
-  the 50/day quota *and* unlocks enumeration by industry + postal code. See §3b.
+  official distribution. The single highest-value credential to request: it removes the
+  50/day quota *and* unlocks enumeration by industry + postal code. **Send this first —
+  it takes a couple of weeks.** Ready-to-send draft in `docs/CVR_ACCESS.md`.
 - **A production Adressevaelger token** — the demo token works but isn't meant for real use.
 - **Hetzner account + server** — needed before M10's deployment steps can run.
 - **ntfy topic name** — trivial, just pick a string.
