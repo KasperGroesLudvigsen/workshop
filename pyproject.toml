@@ -1,0 +1,29 @@
+[project]
+name = "screener"
+version = "0.1.0"
+description = "Summer house location screener for Sjaelland/Lolland/Falster/Moen fritidsboliger"
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.31",
+    "curl_cffi>=0.7",
+    "shapely>=2.0",
+    "pyproj>=3.6",
+    "duckdb>=1.0",
+    "pyyaml>=6.0",
+    "jinja2>=3.1",
+    "osmium>=3.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+# Only needed for resolve/llm_extract.py's last-resort extraction step -
+# kept optional so the rest of the pipeline (fetch, score, site) doesn't
+# require it.
+llm = [
+    "anthropic>=0.40",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
