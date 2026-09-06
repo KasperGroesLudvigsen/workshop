@@ -18,6 +18,12 @@ dependencies = [
 dev = [
     "pytest>=8.0",
 ]
+# Only needed for resolve/llm_extract.py's last-resort extraction step -
+# kept optional so the rest of the pipeline (fetch, score, site) doesn't
+# require it.
+llm = [
+    "anthropic>=0.40",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

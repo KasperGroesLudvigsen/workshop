@@ -25,6 +25,8 @@ from pathlib import Path
 from screener.config import REPO_ROOT, load_settings
 from screener.fetch.bathing_water import build_badevand_lookup, load_badevand_sites
 from screener.fetch.osm_extract import build_geometry_store
+from screener.geo.business_directory import build_business_directory
+from screener.resolve.pipeline import ResolvedBusiness
 from screener.score.pipeline import score_listings, sort_scored_listings
 from screener.site.build import build_site
 
@@ -62,8 +64,19 @@ def main() -> None:
     settings = load_settings()
     store = build_geometry_store(FIXTURE)
     badevand_lookup = build_badevand_lookup(load_badevand_sites(BADEVAND_FIXTURE))
+
+    # M5 demo: a resolved hangout (as if resolve.pipeline had validated it
+    # against CVR + the address register) sitting at the fixture's marina.
+    demo_hangout = ResolvedBusiness(
+        name="Testhavn Kro", street="Havnevej 1", postal_code="4243", town="Rude",
+        lat=55.429518, lon=11.551550, source_step="cvr_match",
+    )
+    business_directory = build_business_directory({"hangout": [demo_hangout]})
+
     listings = build_demo_listings()
-    scored = score_listings(listings, store, settings, badevand_lookup=badevand_lookup)
+    scored = score_listings(
+        listings, store, settings, badevand_lookup=badevand_lookup, business_directory=business_directory
+    )
     scored = sort_scored_listings(scored)
 
     out_path = REPO_ROOT / "data" / "site" / "index.html"
