@@ -7,13 +7,13 @@ letter suffix, e.g. "12B"), a 4-digit postal code, and a town name. That
 regularity is what makes this step useful even before validation — most
 non-address text simply won't match the pattern.
 
-**DAWA shut down 2026-07-01** (after this codebase's knowledge cutoff), and
-the brief calls for Adressevaelger or a drop-in replacement. This sandbox
-has no path to find out what that replacement actually is (no internet
-egress — see fetch/boliga.py). Rather than guess a URL, validation is
-behind the ``AddressValidator`` protocol: swap ``NotConfiguredValidator``
-for a real client once the replacement service is confirmed, and nothing
-else in this module or ``resolve/pipeline.py`` changes.
+Validation lives behind the ``AddressValidator`` protocol so the register
+client is a swappable dependency. The real implementation is
+``resolve.adressevaelger.AdressevaelgerValidator``, built against
+Klimadatastyrelsen's Adressevaelger — DAWA's confirmed replacement, since
+DAWA itself closes permanently 2026-10-01 10:00. ``NotConfiguredValidator``
+below remains the default so that forgetting to pass a real validator fails
+loudly instead of silently accepting unvalidated addresses.
 
 The gate this step exists to enforce: a regex match is a *candidate*, never
 a result. Only a validated hit is returned. Never geocode raw text.
@@ -66,8 +66,9 @@ class NotConfiguredValidator:
 
     def validate(self, candidate: AddressCandidate) -> ValidatedAddress | None:
         raise NotImplementedError(
-            "no AddressValidator configured — confirm DAWA's 2026-07-01 replacement "
-            "and wire it in before trusting any address_regex candidate"
+            "no AddressValidator configured — pass "
+            "resolve.adressevaelger.validator_from_settings(load_settings()) "
+            "before trusting any address candidate"
         )
 
 

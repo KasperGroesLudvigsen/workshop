@@ -1,0 +1,219 @@
+{
+ "soeg_rentemestervej": {
+  "status": "ok",
+  "beskrivelse": "",
+  "fund": [
+   {
+    "type": "husnummer",
+    "id": "0a3f507a-e179-32b8-e044-0003ba298018",
+    "titel": "Rentemestervej 8, 2400 København NV",
+    "vejnavn": "Rentemestervej",
+    "husnummer": "8"
+   },
+   {
+    "type": "adresse",
+    "id": "0a3f50a9-cc30-32b8-e044-0003ba298018",
+    "titel": "Rentemestervej 8, 3400 Hillerød",
+    "husnummerId": "0a3f5080-135c-32b8-e044-0003ba298018"
+   },
+   {
+    "type": "husnummer",
+    "id": "0a3f507a-e1c2-32b8-e044-0003ba298018",
+    "titel": "Rentemestervej 80, 2400 København NV",
+    "vejnavn": "Rentemestervej",
+    "husnummer": "80"
+   },
+   {
+    "type": "adresse",
+    "id": "057b7703-5f15-478d-a8d4-9f0a1e562124",
+    "titel": "Rentemestervej 82, 2400 København NV",
+    "husnummerId": "008eb840-bc1b-443e-b70d-4e4c8b31a276"
+   },
+   {
+    "type": "adresse",
+    "id": "a74f1e75-6198-4bc2-9c80-f61ee6b8b777",
+    "titel": "Rentemestervej 84, 2400 København NV",
+    "husnummerId": "0a3f507a-e1c4-32b8-e044-0003ba298018"
+   }
+  ]
+ },
+ "husnummer_record": {
+  "status": "ok",
+  "husnummer": {
+   "id_lokalid": "0a3f507a-e179-32b8-e044-0003ba298018",
+   "husnummertekst": "8",
+   "adgangsadressebetegnelse": "Rentemestervej 8, 2400 København NV",
+   "vejnavn": "Rentemestervej",
+   "status": "3",
+   "virkningfra": "2018-07-04T16:00:00.000Z",
+   "virkningtil": null,
+   "registreringfra": "2018-07-04T16:00:00.000Z",
+   "registreringtil": null,
+   "adgangspunkt": {
+    "id_lokalid": "0a3f507a-e179-32b8-e044-0003ba298018",
+    "status": "8",
+    "virkningfra": "2009-11-25T00:07:37+00:00",
+    "virkningtil": null,
+    "registreringfra": "2018-05-03T16:58:34+00:00",
+    "registreringtil": null,
+    "geometri": {
+     "type": "Point",
+     "crs": {
+      "type": "name",
+      "properties": {
+       "name": "EPSG:25832"
+      }
+     },
+     "coordinates": [
+      722125.86,
+      6178892.29
+     ]
+    },
+    "koordinater": {
+     "x": 722125.86,
+     "y": 6178892.29
+    }
+   },
+   "postnummer": {
+    "id_lokalid": "f9d004e5-c180-4d70-986f-d3c2cd9ab1f2",
+    "navn": "København NV",
+    "postnr": "2400",
+    "status": "3",
+    "virkningfra": "2023-03-24T16:07:08.717582+00:00",
+    "virkningtil": null,
+    "registreringfra": "2023-03-24T16:07:08.717582+00:00",
+    "registreringtil": null
+   },
+   "navngivenvej": {
+    "id_lokalid": "831a760e-4e3f-42e8-a9a5-0b771f72880a",
+    "vejnavn": "Rentemestervej",
+    "virkningfra": "2025-06-06T21:39:33.394851+00:00",
+    "virkningtil": null,
+    "registreringfra": "2025-06-06T21:39:33.394851+00:00",
+    "registreringtil": null
+   },
+   "navngivenvejkommunedel": {
+    "id_lokalid": "5c994b36-4eae-11e8-93fd-066cff24d637",
+    "kommune": "0101",
+    "vejkode": "5804",
+    "navngivenvej": "831a760e-4e3f-42e8-a9a5-0b771f72880a",
+    "virkningfra": "2025-06-06T21:39:33.394851+00:00",
+    "virkningtil": null,
+    "registreringfra": "2025-06-06T21:39:33.394851+00:00",
+    "registreringtil": null
+   },
+   "navngivenvejpostnummer": {
+    "id_lokalid": "3e3d775b-5f76-41dd-a04f-0de5fed9f574",
+    "virkningfra": "2020-12-18T15:17:19.000774+00:00",
+    "virkningtil": null,
+    "registreringfra": "2020-12-18T15:17:19.000774+00:00",
+    "registreringtil": null
+   },
+   "supplerendebynavn": {
+    "id_lokalid": null,
+    "status": null,
+    "supplerendebynavn": null,
+    "navn": null,
+    "virkningfra": null,
+    "virkningtil": null,
+    "registreringfra": null,
+    "registreringtil": null
+   }
+  }
+ },
+ "adresse_record": {
+  "status": "ok",
+  "adresse": {
+   "id_lokalid": "0a3f50a9-cc30-32b8-e044-0003ba298018",
+   "adressebetegnelse": "Rentemestervej 8, 3400 Hillerød",
+   "etagebetegnelse": null,
+   "doerbetegnelse": null,
+   "status": "3",
+   "virkningfra": "2000-02-05T20:24:03.000Z",
+   "virkningtil": null,
+   "registreringfra": "2018-05-03T16:58:34.000Z",
+   "registreringtil": null,
+   "husnummer": {
+    "id_lokalid": "0a3f5080-135c-32b8-e044-0003ba298018",
+    "husnummertekst": "8",
+    "adgangsadressebetegnelse": "Rentemestervej 8, 3400 Hillerød",
+    "vejnavn": "Rentemestervej",
+    "status": "3",
+    "virkningfra": "2018-07-04T16:00:00+00:00",
+    "virkningtil": null,
+    "registreringfra": "2018-07-04T16:00:00+00:00",
+    "registreringtil": null,
+    "adgangspunkt": {
+     "id_lokalid": "0a3f5080-135c-32b8-e044-0003ba298018",
+     "status": "8",
+     "virkningfra": "2009-11-24T00:50:11+00:00",
+     "virkningtil": null,
+     "registreringfra": "2018-05-03T16:58:34+00:00",
+     "registreringtil": null,
+     "geometri": {
+      "type": "Point",
+      "crs": {
+       "type": "name",
+       "properties": {
+        "name": "EPSG:25832"
+       }
+      },
+      "coordinates": [
+       704843.81,
+       6204781.94
+      ]
+     },
+     "koordinater": {
+      "x": 704843.81,
+      "y": 6204781.94
+     }
+    },
+    "postnummer": {
+     "id_lokalid": "b2addcca-3d37-4898-a0dc-447aea50bba2",
+     "navn": "Hillerød",
+     "postnr": "3400",
+     "status": "3",
+     "virkningfra": "2023-03-24T16:36:22.924549+00:00",
+     "virkningtil": null,
+     "registreringfra": "2023-03-24T16:36:22.924549+00:00",
+     "registreringtil": null
+    },
+    "navngivenvej": {
+     "id_lokalid": "46a834bd-559e-4e69-919d-a534e0a97fcf",
+     "vejnavn": "Rentemestervej",
+     "virkningfra": "1900-01-01T12:00:00+00:00",
+     "virkningtil": null,
+     "registreringfra": "2018-05-29T15:30:00.004005+00:00",
+     "registreringtil": null
+    },
+    "navngivenvejkommunedel": {
+     "id_lokalid": "5c9d595f-4eae-11e8-93fd-066cff24d637",
+     "kommune": "0219",
+     "vejkode": "6833",
+     "navngivenvej": "46a834bd-559e-4e69-919d-a534e0a97fcf",
+     "virkningfra": "1900-01-01T12:00:00+00:00",
+     "virkningtil": null,
+     "registreringfra": "2018-05-03T16:58:34+00:00",
+     "registreringtil": null
+    },
+    "navngivenvejpostnummer": {
+     "id_lokalid": "f474ea2e-6ba1-4d7a-ae60-4295d008661b",
+     "virkningfra": "2020-12-18T15:17:19.000774+00:00",
+     "virkningtil": null,
+     "registreringfra": "2020-12-18T15:17:19.000774+00:00",
+     "registreringtil": null
+    },
+    "supplerendebynavn": {
+     "id_lokalid": null,
+     "status": null,
+     "supplerendebynavn": null,
+     "navn": null,
+     "virkningfra": null,
+     "virkningtil": null,
+     "registreringfra": null,
+     "registreringtil": null
+    }
+   }
+  }
+ }
+}

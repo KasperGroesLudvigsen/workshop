@@ -25,6 +25,14 @@ class BoligaSettings:
 
 
 @dataclass(frozen=True)
+class AdressevaelgerSettings:
+    base_url: str
+    token: str
+    requests_per_second: float
+    max_hits: int
+
+
+@dataclass(frozen=True)
 class Settings:
     water_km: float
     hangout_km: float
@@ -37,6 +45,7 @@ class Settings:
     hard_filter_categories: list[str]
     informational_categories: list[str]
     boliga: BoligaSettings
+    adressevaelger: AdressevaelgerSettings
 
     @property
     def all_categories(self) -> list[str]:
@@ -46,6 +55,7 @@ class Settings:
 def load_settings(path: Path | str = DEFAULT_CONFIG_PATH) -> Settings:
     raw = yaml.safe_load(Path(path).read_text())
     boliga_raw = raw["boliga"]
+    adr_raw = raw["adressevaelger"]
     return Settings(
         water_km=float(raw["water_km"]),
         hangout_km=float(raw["hangout_km"]),
@@ -62,5 +72,11 @@ def load_settings(path: Path | str = DEFAULT_CONFIG_PATH) -> Settings:
             requests_per_second=float(boliga_raw["requests_per_second"]),
             max_results_per_query=int(boliga_raw["max_results_per_query"]),
             user_agent=boliga_raw["user_agent"],
+        ),
+        adressevaelger=AdressevaelgerSettings(
+            base_url=adr_raw["base_url"],
+            token=adr_raw["token"],
+            requests_per_second=float(adr_raw["requests_per_second"]),
+            max_hits=int(adr_raw["max_hits"]),
         ),
     )

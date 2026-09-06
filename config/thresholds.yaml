@@ -51,6 +51,18 @@ informational_categories:
   - butcher
   - beach
 
+# Danish address register (Klimadatastyrelsen Adressevaelger) — the gate every
+# resolved business address must pass. DAWA, the old api.dataforsyningen.dk
+# service, closes permanently 2026-10-01 10:00; this is its replacement.
+# The token below is the demo token from Klimadatastyrelsen's published README
+# and is fine for development. Get a real one for production:
+# https://confluence.sdfi.dk/display/ADV/Brugerstyring
+adressevaelger:
+  base_url: "https://adressevaelger.dk"
+  token: "adressevaelger123"
+  requests_per_second: 5.0
+  max_hits: 30
+
 # Boliga fetch politeness / safety.
 boliga:
   base_url: "https://api.boliga.dk/api/v2/search/results"
