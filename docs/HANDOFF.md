@@ -177,7 +177,47 @@ extract and works. `fetch/osm_extract.py` now takes a mirror list and falls thro
 failure, with Geofabrik still first. `download_geofabrik_extract` is kept as an alias so
 nothing that already calls it breaks.
 
-See "Real-extract results" below for the layer counts.
+**Verified against the real extract**, and this is where a bug surfaced that the previous
+handoff's own check would have missed — see below.
+
+| Layer | Count |
+|---|---|
+| lake | 30,052 (410 from multipolygon relations) |
+| coastline | 2,240 |
+| beach | 1,548 |
+| playground | 9,692 |
+| pool | 1,262 |
+| marina | 564 |
+| swimming_area | 27 |
+
+Lakes clearing the 5 ha filter: **386**. Largest are Arresø 3,957 ha, Esrum Sø 1,735 ha,
+Mossø 1,648 ha — all matching their real-world areas.
+
+### 4b. The bug that check caught — multipolygon lakes FIXED ✅
+
+The first real run looked fine on layer counts, but **Denmark's three largest lakes were
+missing**: Arresø, Esrum Sø and Furesø. All three are mapped in OSM as multipolygon
+*relations*, and the extractor only turned closed *ways* into polygons. All three are in
+North Zealand — postal 3000–3699, inside the target region.
+
+Before the fix: 266 lakes over the area filter, 522 named. After: **386 and 662.** About a
+third of qualifying lakes were being dropped, including the four largest in the country.
+
+**Why the existing safety net didn't fire** — worth understanding, because the previous
+handoff pointed straight at it and it would have cleared the code falsely. The module logged
+a warning when `skipped_open_water_ways` was non-zero, and the instruction was "check that
+count after a real run — if it's large, revisit". Relations are never delivered to the
+`way()` handler at all, so the counter could only ever be **zero**. The gap was only visible
+by checking output against known Danish geography. If you add a similar "we skip some of X"
+counter anywhere, check it can actually observe the thing it claims to count.
+
+`build_geometry_store` now uses `FileProcessor.with_areas()`. Areas are emitted for closed
+ways *and* relations, so area-shaped features come only from areas and ways contribute only
+genuinely linear geometry — collecting both would double-count every closed way (verified:
+zero duplicate `(osm_id, kind)` pairs across all 30,052 real lakes). Records carry the
+original OSM id and whether the feature came from a way or a relation.
+
+A full run takes roughly 5–8 minutes and ~1 GB RSS on the 543 MB Denmark extract.
 
 ## Still blocked — needs a machine with ordinary internet
 
