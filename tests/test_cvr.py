@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from screener.fetch.cvr import (
@@ -58,3 +60,44 @@ def test_rate_limited_raises_not_empty():
     client = CvrClient(transport=transport)
     with pytest.raises(CvrBlockedOrRateLimitedError):
         client.search_by_name("Foo")
+
+
+def _transport_returning(body, status_code=200):
+    def transport(url, params, headers):
+        return TransportResponse(status_code=status_code, json_body=body, text=json.dumps(body))
+
+    return transport
+
+
+def test_quota_exceeded_raises_instead_of_reading_as_no_match():
+    """cvrapi.dk reports a quota block as HTTP 200 with an error key — the
+    body below is the real response the live service returns. Treating it as
+    "no such company" would silently empty the business directory, which is
+    indistinguishable from a region with no shops in it."""
+    body = {
+        "error": "QUOTA_EXCEEDED",
+        "message": "Your quota has been exceeded. Reach out if you are certain this is a error.",
+        "ip": "160.79.106.129",
+    }
+    client = CvrClient(transport=_transport_returning(body), requests_per_second=1000)
+
+    with pytest.raises(CvrBlockedOrRateLimitedError, match="QUOTA_EXCEEDED"):
+        client.search_by_name("Brugsen", postal_code=4180)
+
+
+@pytest.mark.parametrize("code", ["BANNED", "INVALID_UA", "INTERNAL_ERROR"])
+def test_other_blocking_errors_also_raise_hard(code):
+    client = CvrClient(transport=_transport_returning({"error": code}), requests_per_second=1000)
+
+    with pytest.raises(CvrBlockedOrRateLimitedError, match=code):
+        client.search_by_name("Brugsen", postal_code=4180)
+
+
+@pytest.mark.parametrize("code", ["NOT_FOUND", "INVALID_VAT"])
+def test_genuine_misses_stay_not_found(code):
+    """These two are ordinary outcomes, not failures — a small hangout
+    simply may not be registered under the name we searched."""
+    client = CvrClient(transport=_transport_returning({"error": code}), requests_per_second=1000)
+
+    with pytest.raises(CvrNotFoundError):
+        client.search_by_name("Ikke Et Firma", postal_code=4180)

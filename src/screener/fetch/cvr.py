@@ -13,12 +13,26 @@ active/ophoert-checked address) — it is not itself the discovery mechanism
 the brief describes CVR as being. Swapping to the official API later only
 means replacing this client; resolve/cvr_match.py's interface doesn't change.
 
-This sandbox cannot reach cvrapi.dk (see fetch/boliga.py's docstring for the
-general no-egress constraint), so the exact response schema below is from
-public documentation/community usage, not verified live here. cvrapi.dk
-asks callers to identify themselves with a descriptive User-Agent and to
-keep request volume low — no documented hard rate limit, so this errs
-conservative (same 1 req/sec default as Boliga).
+**Quota, verified against the live service and its documentation: 50
+lookups per day, counted per IP *range*.** That is a hard ceiling on how
+much this client can do, and it is low enough to be an architectural
+constraint rather than a tuning detail — resolving a few hundred candidate
+businesses across the region is days of budget, so a real run needs either
+an issued token (cvrapi.dk grants higher limits on request) or the official
+Erhvervsstyrelsen API. See docs/HANDOFF.md.
+
+Error handling is shaped by a verified quirk: cvrapi.dk reports *all* of its
+error conditions as **HTTP 200** with an ``error`` key in the body, so
+status code alone cannot distinguish "this business does not exist" from
+"you are blocked". Conflating the two is the exact failure the Boliga client
+refuses (a block that reads as an empty result is indistinguishable from a
+genuinely empty region), so :data:`_HARD_FAILURE_ERRORS` splits them and
+only genuine misses raise :class:`CvrNotFoundError`.
+
+cvrapi.dk rejects generic user agents with ``INVALID_UA`` and documents the
+expected form: company name, project name, and a contact. Callers must pass
+a real one — :data:`DEFAULT_USER_AGENT` carries the template, not a usable
+value.
 """
 from __future__ import annotations
 
@@ -31,7 +45,15 @@ import requests
 from screener.db import Database
 
 BASE_URL = "https://cvrapi.dk/api"
-DEFAULT_USER_AGENT = "summer-house-screener/0.1 (contact: set a real email before deploying)"
+BASE_USER_AGENT_TEMPLATE = "summer-house-screener - {contact}"
+DEFAULT_USER_AGENT = BASE_USER_AGENT_TEMPLATE.format(contact="SET A REAL CONTACT EMAIL OR PHONE")
+
+#: cvrapi.dk error codes that mean "stop", not "no such company". All of
+#: them arrive as HTTP 200, so they are only distinguishable by this string.
+_HARD_FAILURE_ERRORS = {"QUOTA_EXCEEDED", "BANNED", "INVALID_UA", "INTERNAL_ERROR"}
+
+#: Documented daily allowance per IP range, for callers that want to budget.
+FREE_DAILY_LOOKUP_QUOTA = 50
 
 
 class CvrNotFoundError(RuntimeError):
@@ -41,8 +63,10 @@ class CvrNotFoundError(RuntimeError):
 
 
 class CvrBlockedOrRateLimitedError(RuntimeError):
-    """cvrapi.dk returned 429/403. Treated as a hard failure so it isn't
-    mistaken for "no match found"."""
+    """cvrapi.dk blocked the call — HTTP 429/403, or (much more commonly) an
+    HTTP 200 carrying QUOTA_EXCEEDED, BANNED, INVALID_UA or INTERNAL_ERROR.
+    Treated as a hard failure so it is never mistaken for "no match found",
+    which would quietly empty the business directory instead of failing."""
 
 
 Transport = Callable[[str, dict[str, Any], dict[str, str]], "TransportResponse"]
@@ -91,8 +115,12 @@ class CvrCompany:
 
 
 def _parse_company(body: dict[str, Any]) -> CvrCompany:
-    # Field names per cvrapi.dk's documented shape; isolated for the same
-    # reason as Boliga's _PARAM_NAMES — a live discrepancy is a one-line fix.
+    # `vat`, `name`, `address`, `zipcode`, `city` and `enddate` are confirmed
+    # against cvrapi.dk's own documentation and published response examples;
+    # `vat` comes back as an int and `zipcode` as either, hence the str()
+    # coercions. The trading-name keys below are the one part still
+    # unconfirmed — the docs don't cover binavne — so all three plausible
+    # spellings are accepted rather than betting on one.
     trading_names = []
     for key in ("names", "binames", "secondaryname"):
         val = body.get(key)
@@ -136,8 +164,14 @@ class CvrClient:
             )
         if resp.status_code in (403, 429):
             raise CvrBlockedOrRateLimitedError(f"cvrapi.dk returned {resp.status_code} for params={params}")
-        if resp.status_code == 404 or (resp.json_body or {}).get("error"):
-            raise CvrNotFoundError(f"no CVR match for params={params}")
+        error_code = (resp.json_body or {}).get("error")
+        if error_code in _HARD_FAILURE_ERRORS:
+            raise CvrBlockedOrRateLimitedError(
+                f"cvrapi.dk returned {error_code} (HTTP {resp.status_code}) for params={params} — "
+                f"the free allowance is {FREE_DAILY_LOOKUP_QUOTA} lookups/day per IP range"
+            )
+        if resp.status_code == 404 or error_code:
+            raise CvrNotFoundError(f"no CVR match for params={params} (error={error_code!r})")
         if resp.status_code != 200 or resp.json_body is None:
             raise RuntimeError(f"unexpected cvrapi.dk response: status={resp.status_code} body={resp.text[:300]!r}")
         return resp.json_body
