@@ -12,7 +12,7 @@ environment reason, not a design reason — details below.
 ## tl;dr
 
 - Branch: `claude/resume-work-handoff-mx75xd` on `KasperGroesLudvigsen/workshop`.
-- M0–M5 done. 73 tests pass (was 49).
+- M0–M5 done. 75 tests pass (was 49).
 - **Address validation is no longer stubbed** — this was the one item blocking M5 from doing
   anything real, and it now runs against the live Danish address register.
 - **Bathing water** now reads the real PULS register instead of a guessed CSV schema.
@@ -27,7 +27,7 @@ environment reason, not a design reason — details below.
 cd /path/to/workshop
 uv venv .venv && source .venv/bin/activate
 uv pip install -e ".[dev]"
-PYTHONPATH=src python3 -m pytest tests/ -q          # should show 73 passed
+PYTHONPATH=src python3 -m pytest tests/ -q          # should show 75 passed
 PYTHONPATH=src python3 jobs/demo_m3.py             # writes data/site/index.html
 ```
 
@@ -302,12 +302,12 @@ exercised from here.
   a Hetzner runbook (CX22 sizing, env vars, one-time manual steps). Server provisioning is
   the user's action.
 
-## Test suite map (73 tests, all passing, all offline)
+## Test suite map (75 tests, all passing, all offline)
 
 | File | Covers |
 |---|---|
 | `test_boliga.py` | Sharding, 300-cap bisection, truncation assertion, 403 handling, `discover_property_types` |
-| `test_osm_extract.py` | pyosmium extraction, area computation, spatial queries against the synthetic fixture |
+| `test_osm_extract.py` | Area assembly, **multipolygon-relation lakes and the no-double-counting guard**, area computation, spatial queries |
 | `test_water.py` | Lake area filtering, eligibility signals, strict vs. loose divergence |
 | `test_bathing_water.py` | PULS GeoJSON parsing, closed-station and "Ukendt" rejection, schema-drift raising, spatial site-to-lake matching |
 | `test_cvr.py`, `test_cvr_match.py` | CVR parsing, fuzzy name matching, closed-business rejection, **quota/ban vs. genuine-miss separation** |
