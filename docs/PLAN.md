@@ -1,8 +1,10 @@
 # Summer House Location Screener — Build Plan
 
-> Status as of the last update: **M0–M5 done and pushed**, M6–M10 not started.
-> See `docs/HANDOFF.md` for the detailed status report, what's verified vs.
-> stubbed, and what's needed to keep going.
+> Status as of the last update: **M0–M5 done**, M6–M10 not started. As of
+> 2026-09-15, all 5 real-data verification gaps below are closed (Boliga,
+> cvrapi.dk, the real OSM extract, bathing water, and address validation via
+> a real Datafordeler DAR account). See `docs/HANDOFF.md` for the detailed
+> status report.
 
 ## Context
 
@@ -99,34 +101,38 @@ in CVR business resolution, bathing-water eligibility, findsmiley, and web-searc
 **M0 — Scaffolding.** ✅ Done. `pyproject.toml`, `config/thresholds.yaml`, `db.py` (DuckDB
 raw-response cache + scored-listings table), `config.py` (typed settings loader).
 
-**M1 — Boliga fetch.** ✅ Done, **params unverified live**. Postal-range sharding with
-recursive bisection on the results cap, loud 403 handling, rate limiting, curl_cffi
-transport — all tested via an injectable fake transport. Parameter names and the
-fritidsbolig type code could not be confirmed against the live API (no internet egress in
-the build sandbox) — see `docs/HANDOFF.md` for exactly what needs checking.
+**M1 — Boliga fetch.** ✅ Done, **params confirmed live 2026-09-15**. Postal-range sharding
+with recursive bisection on the results cap, loud 403 handling, rate limiting, curl_cffi
+transport. Parameter names, the fritidsbolig type code (4), and the total-count/listings-
+array keys are all confirmed against the live API — see `docs/HANDOFF.md`.
 
-**M2 — OSM static prep.** ✅ Done, **never run against real Geofabrik data**. pyosmium
-extraction into a projected (EPSG:25832), STRtree-indexed `GeometryStore` covering
-coastline/beach/lake/reservoir/marina/playground/pool/swimming_area. Tested against a
-synthetic-but-real-coordinates OSM fixture (`tests/fixtures/sample.osm.xml`), not a real
-Denmark extract.
+**M2 — OSM static prep.** ✅ Done, **run against the real Geofabrik extract 2026-09-15**.
+pyosmium extraction into a projected (EPSG:25832), STRtree-indexed `GeometryStore` covering
+coastline/beach/lake/reservoir/marina/playground/pool/swimming_area. Real Denmark extract
+yields 29697 lakes, 2230 coastline segments, plausible counts across the board — see
+`docs/HANDOFF.md`. Also still covered by the synthetic fixture
+(`tests/fixtures/sample.osm.xml`) for unit tests.
 
 **M3 — First runnable slice.** ✅ Done. Water scoring + OSM-backed amenity categories wired
 through `score/pipeline.py` into a Leaflet+table static site (`jobs/demo_m3.py` generates a
 real, openable `data/site/index.html`). Verified with a headless-browser render: table
 population, live sort, live threshold filtering, and the strict/loose lake toggle.
 
-**M4 — Lake eligibility.** ✅ Done, **badevand dataset schema/URL unverified**.
-`fetch/bathing_water.py` spatially matches designated bathing-water sites to lake polygons
-(not by name — names differ between OSM and official sources). OSM `swimming_area` and
-beach-on-shore detection work against real OSM data once M2's extract is real.
+**M4 — Lake eligibility.** ✅ Done, **badevand dataset confirmed live 2026-09-15, and the
+original URL/schema were wrong, not just unverified**. `fetch/bathing_water.py` now pulls
+Danmarks Miljøportal's public WFS (`puls:Badevand`), not the old `badevand.dk` guess, and
+spatially matches designated bathing-water sites to lake polygons (not by name — names
+differ between OSM and official sources). OSM `swimming_area` and beach-on-shore detection
+now run against the real M2 extract.
 
-**M5 — CVR + business resolution.** ✅ Done, **cvrapi.dk field names unverified live, and
-it can't do bulk discovery** (see `docs/HANDOFF.md` — it's a lookup API, not an enumeration
-API; discovery of *candidate* names still needs OSM POIs or M7's web-search gap-fill).
-`resolve/pipeline.py` implements all 4 steps with the address-register validation gate;
-`AddressValidator` defaults to a stub that raises, since DAWA's 2026-07-01 replacement is
-unconfirmed. `score/pipeline.py` enforces hangout/grocery as real hard filters once a
+**M5 — CVR + business resolution.** ✅ Done, **cvrapi.dk field names confirmed live
+2026-09-15** (and a real quota-vs-not-found bug fixed — see `docs/HANDOFF.md`). It still
+can't do bulk discovery (it's a lookup API, not an enumeration API; discovery of *candidate*
+names still needs OSM POIs or M7's web-search gap-fill). `resolve/pipeline.py` implements
+all 4 steps with the address-register validation gate; `AddressValidator`'s real
+implementation, `DatafordelerAddressValidator`, is confirmed live against DAR's GraphQL v3
+endpoint (see `docs/HANDOFF.md`) — pass an instance wherever `resolve_business_address` is
+called for real. `score/pipeline.py` enforces hangout/grocery as real hard filters once a
 business directory is supplied.
 
 **M6 — findsmiley.** ⬜ Not started. Attach inspection date + address cross-check as a
@@ -162,11 +168,12 @@ to be broader than just the Boliga DevTools problem.
 ## Verification
 
 - M1: run fetch for one postal shard, confirm raw JSON persisted, confirm 403 raises loudly,
-  confirm count-vs-total assertion fires on a truncated fixture. **Done against fakes; redo
-  against the live API once params are confirmed.**
+  confirm count-vs-total assertion fires on a truncated fixture. **Done against fakes and
+  against the live API (2026-09-15) — params confirmed correct.**
 - M3: run the full slice on real data for one postal range, open the generated `index.html`
   locally, confirm pins + table match a handful of listings checked by hand against a map.
-  **Done against fixtures; redo with real Boliga+OSM data.**
+  **Done against fixtures; every individual data source is now confirmed live, but a full
+  real end-to-end run hasn't happened yet — see docs/HANDOFF.md's suggested next step.**
 - M4: unit-test `eligibility_reason` assignment against constructed fixtures for each of the
   three signals plus the "none" case. **Done.**
 - M5: unit tests for `resolve/pipeline.py` covering each of the 4 steps succeeding/failing in

@@ -1,26 +1,18 @@
 """Boliga fetch client (stage 1 — raw acquisition only, no scoring logic).
 
-``api.boliga.dk/api/v2/search/results`` is undocumented. Per the brief, its
-parameter names and the fritidsbolig property-type integer code must be
-*discovered*, not guessed, by watching DevTools -> Network on boliga.dk. This
-sandbox's outbound network access is restricted to package registries
-(PyPI/npm/GitHub) — direct requests to boliga.dk fail at the egress proxy
-before ever reaching Boliga, so that discovery could not be done live from
-here. Rather than bake in an unverified guess, this module:
-
-  1. Keeps every uncertain name isolated to ``_PARAM_NAMES`` /
-     ``config/thresholds.yaml`` (``boliga_property_type_fritidsbolig``,
-     currently ``null``) so nothing downstream depends on a guess silently.
-  2. Ships :func:`discover_property_types`, which needs no DevTools session
-     at all: it fetches unfiltered results for a demographically mixed
-     postal code and reads the property-type code/label pairs *Boliga's own
-     response* attaches to each listing. Run it once from a machine with
-     real internet access and copy the "Fritidshus" code into the config.
-
-The parameter names in ``_PARAM_NAMES`` match the shape documented by
-several public third-party Boliga-scraping write-ups (page/pageSize/sort/
-zipcodeFrom/zipcodeTo/propertyType), but that is secondhand, not verified by
-this session — treat them as a strong starting point to confirm, not fact.
+``api.boliga.dk/api/v2/search/results`` is undocumented but confirmed live
+2026-09-15 via the ``curl_cffi`` browser-impersonation transport below
+(plain HTTP gets a Cloudflare challenge page, not a 403 with a body — the
+impersonation is required, not optional). Confirmed against a real response:
+``_PARAM_NAMES`` (zipcodeFrom/zipcodeTo/page/pageSize/sort/propertyType),
+``meta.totalCount``/``results`` as the total-count/listings-array keys, and
+``boliga_property_type_fritidsbolig: 4`` in ``config/thresholds.yaml``
+(filtering a known holiday-cottage postal range by propertyType=4 returned
+overwhelmingly small cottages in known sommerhus villages; the per-listing
+``propertyType`` field in the response doesn't reliably echo the filter
+value back, so ``discover_property_types`` below can't read off a label —
+the server-side filter itself was verified to work by comparing totals per
+code instead).
 """
 from __future__ import annotations
 
@@ -274,7 +266,9 @@ def normalize_listing(raw: dict[str, Any]) -> dict[str, Any]:
         "days_on_market": _first_present(raw, ("daysForSale", "daysOnMarket")),
         "address": _first_present(raw, ("address", "street")),
         "zip_code": _first_present(raw, ("zipCode", "zipcode")),
-        "url": _first_present(raw, ("url", "guid")),
+        # Real responses carry no "url"/"guid" field at all -- confirmed live
+        # that boliga.dk/bolig/{id} 200s and redirects to the canonical listing page.
+        "url": f"https://www.boliga.dk/bolig/{listing_id}",
     }
 
 
@@ -283,8 +277,11 @@ def discover_property_types(
 ) -> dict[Any, set[str]]:
     """Fetch unfiltered results for one postal code and collect the
     (code -> observed label strings) Boliga's own payload attaches to each
-    listing, so the fritidsbolig code can be read off without a DevTools
-    session. Run from a networked machine; not runnable in this sandbox."""
+    listing. Confirmed live: real responses carry no label field
+    (propertyTypeName/propertyType_da/type all absent), so this returns
+    codes with empty label sets in practice -- kept for a future response
+    shape that does include labels, but property-type codes were confirmed
+    instead by comparing per-code result totals for a known sommerhus area."""
     body = client.search_page(zip_from=sample_zip, zip_to=sample_zip, property_type=None, page=1, page_size=page_size)
     listings = _extract_listings(body)
     codes: dict[Any, set[str]] = {}

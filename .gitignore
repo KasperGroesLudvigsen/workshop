@@ -1,9 +1,11 @@
 .venv/
+.env
 __pycache__/
 *.pyc
 .pytest_cache/
 data/*.duckdb
 data/*.pbf
 data/osm_store.pkl
+data/*.geojson
 data/site/
 *.egg-info/

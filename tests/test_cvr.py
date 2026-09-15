@@ -58,3 +58,12 @@ def test_rate_limited_raises_not_empty():
     client = CvrClient(transport=transport)
     with pytest.raises(CvrBlockedOrRateLimitedError):
         client.search_by_name("Foo")
+
+
+def test_quota_exceeded_is_blocked_not_not_found():
+    # cvrapi.dk signals quota/ban as a 200 with an "error" body, not a 4xx --
+    # this must not be conflated with "no such company".
+    transport = _transport({"Foo": TransportResponse(200, {"error": "QUOTA_EXCEEDED"}, "{}")})
+    client = CvrClient(transport=transport)
+    with pytest.raises(CvrBlockedOrRateLimitedError):
+        client.search_by_name("Foo")

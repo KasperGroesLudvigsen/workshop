@@ -29,9 +29,11 @@ postal_ranges:
   - [3000, 3699]
   - [4000, 4990]
 
-# Boliga property-type code for fritidsbolig. Filled in from a live probe of
-# api.boliga.dk (see fetch/boliga.py docstring for how it was confirmed).
-boliga_property_type_fritidsbolig: null  # TODO: set once confirmed live
+# Boliga property-type code for fritidsbolig. Confirmed live 2026-09-15: filtering
+# a known holiday-cottage postal range (4500-4581, Sjaellands Odde) by propertyType=4
+# returns 376/673 results, all small (38-84 m2) cottages in known sommerhus villages
+# (Nyrup, Ebbelokke, Lumsaas) -- see fetch/boliga.py docstring.
+boliga_property_type_fritidsbolig: 4
 
 # Categories that are hard filters (fail => listing excluded).
 hard_filter_categories:

@@ -31,7 +31,7 @@ from screener.score.pipeline import score_listings, sort_scored_listings
 from screener.site.build import build_site
 
 FIXTURE = Path(__file__).parent.parent / "tests" / "fixtures" / "sample.osm.xml"
-BADEVAND_FIXTURE = Path(__file__).parent.parent / "tests" / "fixtures" / "badevand_sample.csv"
+BADEVAND_FIXTURE = Path(__file__).parent.parent / "tests" / "fixtures" / "badevand_sample.geojson"
 
 # Synthetic listings: (id, lat, lon, price, size_m2, lot_size_m2, rooms, build_year, address)
 DEMO_LISTINGS = [

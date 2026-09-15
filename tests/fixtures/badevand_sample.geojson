@@ -1,0 +1,23 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "Badevand.1",
+      "geometry": {"type": "Point", "coordinates": [659351.7337209156, 6145100.50111938]},
+      "properties": {"Name": "Ensom So Badested", "WaterType": "Ferskvand", "Closed": null}
+    },
+    {
+      "type": "Feature",
+      "id": "Badevand.2",
+      "geometry": {"type": "Point", "coordinates": [661465.918288057, 6142485.54625569]},
+      "properties": {"Name": "Testhavn Kyst", "WaterType": "Marin", "Closed": null}
+    },
+    {
+      "type": "Feature",
+      "id": "Badevand.3",
+      "geometry": {"type": "Point", "coordinates": [659400.0, 6145150.0]},
+      "properties": {"Name": "Nedlagt Soebad", "WaterType": "Ferskvand", "Closed": "2003-07-01T22:00:00Z"}
+    }
+  ]
+}

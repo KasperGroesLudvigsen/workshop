@@ -7,22 +7,27 @@ letter suffix, e.g. "12B"), a 4-digit postal code, and a town name. That
 regularity is what makes this step useful even before validation — most
 non-address text simply won't match the pattern.
 
-**DAWA shut down 2026-07-01** (after this codebase's knowledge cutoff), and
-the brief calls for Adressevaelger or a drop-in replacement. This sandbox
-has no path to find out what that replacement actually is (no internet
-egress — see fetch/boliga.py). Rather than guess a URL, validation is
-behind the ``AddressValidator`` protocol: swap ``NotConfiguredValidator``
-for a real client once the replacement service is confirmed, and nothing
-else in this module or ``resolve/pipeline.py`` changes.
+DAWA (the old address API) shuts down 2026-10-01. Its replacement,
+``DatafordelerAddressValidator`` below, is confirmed live against DAR's
+GraphQL v3 endpoint as of 2026-09-15 — see that class's docstring for the
+query shape. Validation is behind the ``AddressValidator`` protocol so
+nothing else in this module or ``resolve/pipeline.py`` needs to change.
 
 The gate this step exists to enforce: a regex match is a *candidate*, never
 a result. Only a validated hit is returned. Never geocode raw text.
 """
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Protocol
+
+import requests
+import shapely.wkt
+
+from screener.geo.projection import geom_to_wgs84
 
 # Street name / number(+letter) / 4-digit postal code / town. Each word of
 # the street name must itself start with a capital letter (Danish street
@@ -66,8 +71,128 @@ class NotConfiguredValidator:
 
     def validate(self, candidate: AddressCandidate) -> ValidatedAddress | None:
         raise NotImplementedError(
-            "no AddressValidator configured — confirm DAWA's 2026-07-01 replacement "
-            "and wire it in before trusting any address_regex candidate"
+            "no AddressValidator configured — pass a DatafordelerAddressValidator "
+            "before trusting any address_regex candidate"
+        )
+
+
+_DAR_GAELDENDE_STATUS = "3"  # DAR livscyklus kodeliste: 1=Intern forberedelse, 2=Foreloebig, 3=Gaeldende, 4=Nedlagt
+
+# DAR's only text-search filter (adgangsadressebetegnelse) supports startsWith/eq/in,
+# not "contains", and every list query on this schema requires either an
+# id/rowId filter or a virkningstid/registreringstid argument -- confirmed live.
+_HUSNUMMER_QUERY = """
+query($street: String!, $vtid: DafDateTime!) {
+  DAR_Husnummer(virkningstid: $vtid, where: { adgangsadressebetegnelse: { startsWith: $street } }, first: 10) {
+    nodes {
+      adgangsadressebetegnelse
+      status
+      adgangspunkt
+    }
+  }
+}
+"""
+
+_ADRESSEPUNKT_QUERY = """
+query($id: String!, $vtid: DafDateTime!) {
+  DAR_Adressepunkt(virkningstid: $vtid, where: { id_lokalId: { eq: $id } }, first: 1) {
+    nodes {
+      position { wkt }
+    }
+  }
+}
+"""
+
+
+def _parse_postal_from_betegnelse(betegnelse: str) -> str | None:
+    """"Havnevej 1, 4243 Rude" -> "4243". DAR's postnummer field on
+    DAR_Husnummer is an opaque reference id, not the 4-digit code, so the
+    only place the plain code is available for a cross-check is this
+    human-readable string DAR itself renders."""
+    _, _, tail = betegnelse.partition(", ")
+    postal, _, _ = tail.strip().partition(" ")
+    return postal if postal.isdigit() and len(postal) == 4 else None
+
+
+class DatafordelerAddressValidator:
+    """Confirmed live 2026-09-15 against DAR's (Danmarks Adresseregister)
+    GraphQL v3 endpoint, DAWA's replacement. Two round trips per candidate:
+
+    1. ``DAR_Husnummer`` filtered by ``adgangsadressebetegnelse.startsWith``
+       (the candidate's "Street Number" text — DAR's only free-text filter).
+       Keeps only a node whose status is "Gaeldende" (3) and whose own
+       recorded postal code (parsed from the betegnelse string, since the
+       schema's ``postnummer`` field is an opaque reference id, not the
+       4-digit code) matches the candidate's postal code.
+    2. ``DAR_Adressepunkt`` filtered by ``id_lokalId`` on that node's
+       ``adgangspunkt`` reference, to get its ``position`` (WKT point in
+       EPSG:25832 — reprojected to WGS84 to match ``ValidatedAddress``).
+
+    Every list query on this schema requires either an id/rowId filter or a
+    bitemporal ``virkningstid``/``registreringstid`` argument (confirmed
+    live via a 400 without one) — ``virkningstid: now`` is passed on both
+    calls to mean "as currently registered".
+    """
+
+    BASE_URL = "https://graphql.datafordeler.dk/DAR/v3"
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        *,
+        session: requests.Session | None = None,
+        base_url: str = BASE_URL,
+    ):
+        api_key = api_key or os.environ.get("DATAFORDELER_DAR_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "DATAFORDELER_DAR_API_KEY not set — required for DatafordelerAddressValidator"
+            )
+        self._api_key = api_key
+        self._session = session or requests.Session()
+        self._base_url = base_url
+
+    def _query(self, query: str, variables: dict) -> dict:
+        resp = self._session.post(
+            self._base_url,
+            params={"apiKey": self._api_key},
+            json={"query": query, "variables": variables},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        if body.get("errors"):
+            raise RuntimeError(f"DAR GraphQL error for variables={variables}: {body['errors']}")
+        return body["data"]
+
+    def validate(self, candidate: AddressCandidate) -> ValidatedAddress | None:
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        husnummer_data = self._query(_HUSNUMMER_QUERY, {"street": candidate.street, "vtid": now})
+
+        match = None
+        for node in husnummer_data["DAR_Husnummer"]["nodes"]:
+            if node["status"] != _DAR_GAELDENDE_STATUS:
+                continue
+            if _parse_postal_from_betegnelse(node["adgangsadressebetegnelse"]) != candidate.postal_code:
+                continue
+            match = node
+            break
+        if match is None:
+            return None
+
+        point_data = self._query(_ADRESSEPUNKT_QUERY, {"id": match["adgangspunkt"], "vtid": now})
+        nodes = point_data["DAR_Adressepunkt"]["nodes"]
+        if not nodes or not nodes[0]["position"]:
+            return None
+
+        point_25832 = shapely.wkt.loads(nodes[0]["position"]["wkt"])
+        point_wgs84 = geom_to_wgs84(point_25832)
+        return ValidatedAddress(
+            street=candidate.street,
+            postal_code=candidate.postal_code,
+            town=candidate.town,
+            lat=point_wgs84.y,
+            lon=point_wgs84.x,
         )
 
 

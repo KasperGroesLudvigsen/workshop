@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -9,22 +10,30 @@ from screener.fetch.osm_extract import build_geometry_store
 from screener.geo.water import compute_water
 
 OSM_FIXTURE = Path(__file__).parent / "fixtures" / "sample.osm.xml"
-BADEVAND_FIXTURE = Path(__file__).parent / "fixtures" / "badevand_sample.csv"
+BADEVAND_FIXTURE = Path(__file__).parent / "fixtures" / "badevand_sample.geojson"
 
 
 def test_load_badevand_sites_parses_inland_flag():
     sites = load_badevand_sites(BADEVAND_FIXTURE)
+    # the closed station is dropped
     assert len(sites) == 2
     by_name = {s.name: s for s in sites}
     assert by_name["Ensom So Badested"].is_inland is True
     assert by_name["Testhavn Kyst"].is_inland is False
 
 
-def test_load_badevand_sites_raises_on_missing_columns(tmp_path):
-    bad_csv = tmp_path / "bad.csv"
-    bad_csv.write_text("name,lat,lon\nFoo,55.0,11.0\n")
+def test_load_badevand_sites_drops_closed_stations():
+    sites = load_badevand_sites(BADEVAND_FIXTURE)
+    assert "Nedlagt Soebad" not in {s.name for s in sites}
+
+
+def test_load_badevand_sites_raises_on_missing_properties(tmp_path):
+    bad_geojson = tmp_path / "bad.geojson"
+    bad_geojson.write_text(
+        json.dumps({"type": "FeatureCollection", "features": [{"properties": {"Name": "Foo"}}]})
+    )
     with pytest.raises(KeyError):
-        load_badevand_sites(bad_csv)
+        load_badevand_sites(bad_geojson)
 
 
 def test_real_badevand_lookup_flips_ineligible_lake_to_eligible():

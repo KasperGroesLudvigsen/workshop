@@ -13,12 +13,16 @@ active/ophoert-checked address) — it is not itself the discovery mechanism
 the brief describes CVR as being. Swapping to the official API later only
 means replacing this client; resolve/cvr_match.py's interface doesn't change.
 
-This sandbox cannot reach cvrapi.dk (see fetch/boliga.py's docstring for the
-general no-egress constraint), so the exact response schema below is from
-public documentation/community usage, not verified live here. cvrapi.dk
-asks callers to identify themselves with a descriptive User-Agent and to
-keep request volume low — no documented hard rate limit, so this errs
-conservative (same 1 req/sec default as Boliga).
+Confirmed live 2026-09-15: the flat ``https://cvrapi.dk/api?search=...&country=dk``
+endpoint returns real company records with exactly the field names
+``_parse_company`` below expects (flat ``address`` string, ``zipcode``,
+``city``, ``enddate``). cvrapi.dk documents a 50-lookups/day/IP quota, and
+returns quota/ban/internal-error conditions as a 200 response with an
+``error`` key (``QUOTA_EXCEEDED``/``BANNED``/``INTERNAL_ERROR``) rather than
+a 4xx/5xx status — genuinely-missing companies are a plain HTTP 404 with no
+special body. cvrapi.dk asks callers to identify themselves with a
+descriptive User-Agent — this errs conservative on request rate (1 req/sec
+default, same as Boliga) given the low daily quota.
 """
 from __future__ import annotations
 
@@ -31,7 +35,13 @@ import requests
 from screener.db import Database
 
 BASE_URL = "https://cvrapi.dk/api"
-DEFAULT_USER_AGENT = "summer-house-screener/0.1 (contact: set a real email before deploying)"
+DEFAULT_USER_AGENT = "summer-house-screener/0.1 (contact: groes.ludvigsen@gmail.com)"
+
+# cvrapi.dk signals quota/ban/internal-error conditions with a 200 response
+# and one of these "error" values, not a 4xx/5xx status -- confirmed live.
+# A missing company is a plain 404 with no such body, so these must not be
+# treated the same as "no match found".
+_BLOCKED_ERROR_CODES = {"QUOTA_EXCEEDED", "BANNED"}
 
 
 class CvrNotFoundError(RuntimeError):
@@ -134,10 +144,15 @@ class CvrClient:
             self._db.save_raw_response(
                 source="cvr_lookup", url=BASE_URL, params=params, status_code=resp.status_code, body=resp.text
             )
-        if resp.status_code in (403, 429):
-            raise CvrBlockedOrRateLimitedError(f"cvrapi.dk returned {resp.status_code} for params={params}")
-        if resp.status_code == 404 or (resp.json_body or {}).get("error"):
+        error = (resp.json_body or {}).get("error")
+        if resp.status_code in (403, 429) or error in _BLOCKED_ERROR_CODES:
+            raise CvrBlockedOrRateLimitedError(
+                f"cvrapi.dk blocked the request (status={resp.status_code} error={error!r}) for params={params}"
+            )
+        if resp.status_code == 404:
             raise CvrNotFoundError(f"no CVR match for params={params}")
+        if error:
+            raise RuntimeError(f"cvrapi.dk returned error={error!r} for params={params}")
         if resp.status_code != 200 or resp.json_body is None:
             raise RuntimeError(f"unexpected cvrapi.dk response: status={resp.status_code} body={resp.text[:300]!r}")
         return resp.json_body
