@@ -2,13 +2,13 @@
 
 Two concerns live here, kept deliberately separate:
 
-- **Raw response cache** (`raw_responses`): every fetch stage (Boliga, CVR,
+- **Raw response cache** (`raw_responses`): every fetch stage (Boligsiden, CVR,
   bathing water, ...) writes its untouched response body here, keyed by a
   hash of (source, url, params). The scorer reads only from this table -
   changing a threshold in config/thresholds.yaml re-runs scoring from disk,
   never re-fetches. Re-running a fetch with identical params is a cache hit
   and skipped, so re-running `jobs/nightly.py` during development doesn't
-  hammer Boliga.
+  hammer a third-party API.
 - **Scored listings** (`scored_listings`): one JSON blob per listing per run
   date, so the nightly job can diff today's passing listings against
   yesterday's without re-scoring.

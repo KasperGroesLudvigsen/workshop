@@ -1,14 +1,17 @@
 # Summer House Location Screener — Build Plan
 
 > Status as of the last update: **M0–M5 done**, M6–M10 not started. As of
-> 2026-09-15, all 5 real-data verification gaps below are closed (Boliga,
+> 2026-09-15, all 5 real-data verification gaps below are closed (listings,
 > cvrapi.dk, the real OSM extract, bathing water, and address validation via
-> a real Datafordeler DAR account). See `docs/HANDOFF.md` for the detailed
-> status report.
+> a real Datafordeler DAR account) -- and, same day, the listings source
+> was switched from Boliga to Boligsiden after Boliga's Cloudflare
+> protection proved unreliable for a real run. A real end-to-end run
+> (`jobs/run_real.py`) works against the full configured region. See
+> `docs/HANDOFF.md` for the detailed status report.
 
 ## Context
 
-The user wants a filter, not a recommender: pull fritidsbolig listings from Boliga across
+The user wants a filter, not a recommender: pull fritidsbolig listings across
 Sjælland/Lolland/Falster/Møn, drop everything that fails three hard geographic thresholds
 (open water, hangout, grocery), and surface the survivors on a static map+table site with
 live-adjustable thresholds, counts, and named establishments. The repo started empty (just
@@ -16,9 +19,11 @@ a README) — this was a from-scratch build. The original brief was unusually co
 already answered most architecture questions), so this plan's job was to turn it into a
 concrete file layout and a buildable sequence, not to re-litigate its decisions.
 
-Stack: **Python** (shapely/pyproj, DuckDB, requests/curl_cffi, pyosmium). Build order: a
-**thin vertical slice first** (Boliga → OSM-only distance filter → static site), then layer
-in CVR business resolution, bathing-water eligibility, findsmiley, and web-search gap-fill.
+Stack: **Python** (shapely/pyproj, DuckDB, requests, pyosmium). Build order: a
+**thin vertical slice first** (listings fetch → OSM-only distance filter → static site), then
+layer in CVR business resolution, bathing-water eligibility, findsmiley, and web-search
+gap-fill. The listings source itself started as Boliga (M1) and was replaced with Boligsiden
+2026-09-15 — see M1 below and `docs/HANDOFF.md`.
 
 ## Repo layout
 
@@ -27,7 +32,8 @@ in CVR business resolution, bathing-water eligibility, findsmiley, and web-searc
   thresholds.yaml          # all distances, min lake area ha, strictness default — single source of truth
 /src/screener
   /fetch                   # stage 1: raw acquisition, no scoring logic
-    boliga.py              # sharded search + detail-endpoint client, rate-limited, curl_cffi
+    boligsiden.py          # paginated search client + client-side postal-range filter, rate-limited
+    _rate_limit.py         # shared RateLimiter (boligsiden.py + cvr.py)
     osm_extract.py         # Geofabrik download + osmium/pyosmium filtering into a local spatial store
     cvr.py                 # cvrapi.dk lookup client (name/vat search)
     bathing_water.py       # Miljøstyrelsen/EEA badevand dataset pull + spatial lake matching
@@ -58,10 +64,11 @@ in CVR business resolution, bathing-water eligibility, findsmiley, and web-searc
   config.py                # loads thresholds.yaml, exposes typed Settings
 /jobs
   demo_m3.py               # end-to-end demo against synthetic fixtures (proves the pipeline wiring)
+  run_real.py              # one-shot real run: live Boligsiden + real OSM/bathing-water -> site
   static_prep.py           # NOT STARTED — monthly/on-demand: OSM index, CVR pull+resolve, bathing-water pull (M8-ish)
-  nightly.py               # NOT STARTED — Boliga fetch -> score -> diff -> notify (M8)
+  nightly.py               # NOT STARTED — fetch -> score -> diff -> notify (M8)
 /deploy                    # NOT STARTED — systemd units + Hetzner runbook (M10)
-/tests                     # 49 tests, all passing
+/tests                     # 55 tests, all passing
 ```
 
 ## Key design decisions (carried from the brief, made concrete)
@@ -90,21 +97,27 @@ in CVR business resolution, bathing-water eligibility, findsmiley, and web-searc
   register. Anything that fails all four steps is dropped with a logged reason — never
   geocode raw text, model output included. Every candidate (CVR, JSON-LD, regex, LLM) is
   run through the *same* validator gate.
-- **Boliga safety**: `fetch/boliga.py` enforces 1 req/sec, sets a realistic UA (curl_cffi
-  browser impersonation available if Cloudflare blocks plain requests), treats HTTP 403 as a
-  hard failure (raises, never degrades to empty results), and asserts the shard's returned
-  count against the response's declared total, recursively bisecting the postal range if a
-  shard is over the ~300-result cap.
+- **Boligsiden safety**: `fetch/boligsiden.py` enforces a considerate rate limit, treats
+  HTTP 403/429 as a hard failure (raises, never degrades to empty results), and asserts the
+  number of *unique* cases collected against the response's declared `totalHits` — a
+  duplicate `caseID` across pages (confirmed to happen live, at national scale, as the
+  underlying sorted dataset shifts mid-crawl) is logged and skipped, not treated as
+  truncation. No postal-range sharding needed: Boligsiden has no small per-query cap the way
+  Boliga did, so the client just pages through the whole country and filters by zip code
+  client-side.
 
 ## Build sequence (vertical slices)
 
 **M0 — Scaffolding.** ✅ Done. `pyproject.toml`, `config/thresholds.yaml`, `db.py` (DuckDB
 raw-response cache + scored-listings table), `config.py` (typed settings loader).
 
-**M1 — Boliga fetch.** ✅ Done, **params confirmed live 2026-09-15**. Postal-range sharding
-with recursive bisection on the results cap, loud 403 handling, rate limiting, curl_cffi
-transport. Parameter names, the fritidsbolig type code (4), and the total-count/listings-
-array keys are all confirmed against the live API — see `docs/HANDOFF.md`.
+**M1 — Listings fetch.** ✅ Done. Originally built against Boliga (params confirmed live
+2026-09-15), then **replaced with Boligsiden same day** after Boliga's Cloudflare protection
+proved unreliable for a real run — see `docs/HANDOFF.md`. `fetch/boligsiden.py` pages through
+the whole country per `addressType` (no sharding needed, unlike Boliga) and filters to the
+configured postal ranges client-side; loud truncation/duplicate handling, rate limiting.
+`fritidsbolig_address_type: "holiday house"` and the field mapping are confirmed against the
+live API.
 
 **M2 — OSM static prep.** ✅ Done, **run against the real Geofabrik extract 2026-09-15**.
 pyosmium extraction into a projected (EPSG:25832), STRtree-indexed `GeometryStore` covering
@@ -113,10 +126,13 @@ yields 29697 lakes, 2230 coastline segments, plausible counts across the board �
 `docs/HANDOFF.md`. Also still covered by the synthetic fixture
 (`tests/fixtures/sample.osm.xml`) for unit tests.
 
-**M3 — First runnable slice.** ✅ Done. Water scoring + OSM-backed amenity categories wired
-through `score/pipeline.py` into a Leaflet+table static site (`jobs/demo_m3.py` generates a
-real, openable `data/site/index.html`). Verified with a headless-browser render: table
-population, live sort, live threshold filtering, and the strict/loose lake toggle.
+**M3 — First runnable slice.** ✅ Done, and now also verified against real data. Water
+scoring + OSM-backed amenity categories wired through `score/pipeline.py` into a Leaflet+table
+static site. `jobs/demo_m3.py` (synthetic fixtures) verified via headless-browser render:
+table population, live sort, live threshold filtering, strict/loose lake toggle.
+`jobs/run_real.py` (real Boligsiden + real OSM/bathing-water data) verified 2026-09-15: 2,428
+real listings across the full configured region, opened in a real browser — pins cluster
+along the coast exactly where fritidshuse actually are.
 
 **M4 — Lake eligibility.** ✅ Done, **badevand dataset confirmed live 2026-09-15, and the
 original URL/schema were wrong, not just unverified**. `fetch/bathing_water.py` now pulls
@@ -160,20 +176,17 @@ provisioning happens on the user's side.
 
 ## Explicitly flagged gaps
 
-See `docs/HANDOFF.md` for the full, current list with exact file/line pointers — it
-supersedes the version of this list from earlier in the build, since some items resolved
-(bathing water, CVR access decision) and the core constraint (no internet egress) turned out
-to be broader than just the Boliga DevTools problem.
+See `docs/HANDOFF.md` for the full, current list with exact file/line pointers.
 
 ## Verification
 
-- M1: run fetch for one postal shard, confirm raw JSON persisted, confirm 403 raises loudly,
-  confirm count-vs-total assertion fires on a truncated fixture. **Done against fakes and
-  against the live API (2026-09-15) — params confirmed correct.**
-- M3: run the full slice on real data for one postal range, open the generated `index.html`
-  locally, confirm pins + table match a handful of listings checked by hand against a map.
-  **Done against fixtures; every individual data source is now confirmed live, but a full
-  real end-to-end run hasn't happened yet — see docs/HANDOFF.md's suggested next step.**
+- M1: run fetch for the full configured region, confirm raw JSON persisted, confirm 403/429
+  raises loudly, confirm the unique-count-vs-`totalHits` assertion fires on a truncated
+  fixture. **Done against fakes and against the live API (2026-09-15) — 2,428 real listings
+  fetched, field mapping confirmed correct.**
+- M3: run the full slice on real data for the configured region, open the generated
+  `index.html` locally, confirm pins + table match a handful of listings checked by hand
+  against a map. **Done, 2026-09-15 — see M3 above.**
 - M4: unit-test `eligibility_reason` assignment against constructed fixtures for each of the
   three signals plus the "none" case. **Done.**
 - M5: unit tests for `resolve/pipeline.py` covering each of the 4 steps succeeding/failing in

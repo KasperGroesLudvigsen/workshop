@@ -22,17 +22,17 @@ returns quota/ban/internal-error conditions as a 200 response with an
 a 4xx/5xx status — genuinely-missing companies are a plain HTTP 404 with no
 special body. cvrapi.dk asks callers to identify themselves with a
 descriptive User-Agent — this errs conservative on request rate (1 req/sec
-default, same as Boliga) given the low daily quota.
+default) given the low daily quota.
 """
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
 import requests
 
 from screener.db import Database
+from screener.fetch._rate_limit import RateLimiter
 
 BASE_URL = "https://cvrapi.dk/api"
 DEFAULT_USER_AGENT = "summer-house-screener/0.1 (contact: groes.ludvigsen@gmail.com)"
@@ -75,19 +75,6 @@ def _requests_transport(url: str, params: dict[str, Any], headers: dict[str, str
     return TransportResponse(status_code=resp.status_code, json_body=body, text=resp.text)
 
 
-class RateLimiter:
-    def __init__(self, requests_per_second: float):
-        self._min_interval = 1.0 / requests_per_second
-        self._last_call: float | None = None
-
-    def wait(self) -> None:
-        if self._last_call is not None:
-            remaining = self._min_interval - (time.monotonic() - self._last_call)
-            if remaining > 0:
-                time.sleep(remaining)
-        self._last_call = time.monotonic()
-
-
 @dataclass
 class CvrCompany:
     cvr_number: str
@@ -101,8 +88,8 @@ class CvrCompany:
 
 
 def _parse_company(body: dict[str, Any]) -> CvrCompany:
-    # Field names per cvrapi.dk's documented shape; isolated for the same
-    # reason as Boliga's _PARAM_NAMES — a live discrepancy is a one-line fix.
+    # Field names per cvrapi.dk's documented shape; isolated so a live
+    # discrepancy is a one-line fix.
     trading_names = []
     for key in ("names", "binames", "secondaryname"):
         val = body.get(key)

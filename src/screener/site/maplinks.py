@@ -1,9 +1,9 @@
 """External map link builders — plain URLs, no API key.
 
 Coordinates, not addresses: a sommerhusomraade address geocodes unreliably
-and can land on the wrong plot, while Boliga gives lat/lon directly. The
-comma between lat and lon is encoded as ``%2C`` per Google's docs, even
-though a bare comma usually works too.
+and can land on the wrong plot, while the listing source gives lat/lon
+directly. The comma between lat and lon is encoded as ``%2C`` per Google's
+docs, even though a bare comma usually works too.
 """
 from __future__ import annotations
 

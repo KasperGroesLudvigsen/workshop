@@ -29,11 +29,10 @@ postal_ranges:
   - [3000, 3699]
   - [4000, 4990]
 
-# Boliga property-type code for fritidsbolig. Confirmed live 2026-09-15: filtering
-# a known holiday-cottage postal range (4500-4581, Sjaellands Odde) by propertyType=4
-# returns 376/673 results, all small (38-84 m2) cottages in known sommerhus villages
-# (Nyrup, Ebbelokke, Lumsaas) -- see fetch/boliga.py docstring.
-boliga_property_type_fritidsbolig: 4
+# Boligsiden addressType for fritidsbolig. Confirmed live 2026-09-15 via the
+# API's own 400 error body, which lists the full valid addressTypes enum --
+# see fetch/boligsiden.py docstring.
+fritidsbolig_address_type: "holiday house"
 
 # Categories that are hard filters (fail => listing excluded).
 hard_filter_categories:
@@ -53,9 +52,11 @@ informational_categories:
   - butcher
   - beach
 
-# Boliga fetch politeness / safety.
-boliga:
-  base_url: "https://api.boliga.dk/api/v2/search/results"
-  requests_per_second: 1.0
-  max_results_per_query: 300
-  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+# Boligsiden fetch politeness. No documented rate limit or blocking observed
+# live (unlike Boliga's Cloudflare), but a considerate default throttle is
+# kept anyway -- see fetch/boligsiden.py docstring.
+boligsiden:
+  base_url: "https://api.boligsiden.dk/search/cases"
+  requests_per_second: 3.0
+  per_page: 500
+  user_agent: "summer-house-screener/0.1 (contact: groes.ludvigsen@gmail.com)"

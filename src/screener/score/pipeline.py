@@ -1,6 +1,6 @@
 """Scoring: raw listings + prebuilt geometry index -> scored records.
 
-Reads only from persisted raw data (normalized Boliga listings), the
+Reads only from persisted raw data (normalized Boligsiden listings), the
 prebuilt :class:`~screener.geo.store.GeometryStore`, and a resolved
 business directory — never re-fetches. Re-running this with a changed
 ``config/thresholds.yaml`` reproduces a new result set from the same
@@ -90,7 +90,7 @@ def score_listing(
         "days_on_market": listing.get("days_on_market"),
         "address": listing.get("address"),
         "zip_code": listing.get("zip_code"),
-        "boliga_url": listing.get("url"),
+        "listing_url": listing.get("url"),
         "water": {
             "sea_distance_km": water.sea_distance_km,
             "nearest_lake_any": asdict(water.nearest_lake_any) if water.nearest_lake_any else None,

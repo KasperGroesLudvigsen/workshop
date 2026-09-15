@@ -4,33 +4,64 @@ Read this first if you're picking this project back up.
 
 ## tl;dr
 
-- Branch: `claude/summer-house-screener-plan-xpq7u6` on `KasperGroesLudvigsen/workshop`.
-- M0–M5 done. 56 tests pass.
-- **2026-09-15 session**: closed all 5 verification gaps from the previous handoff using real
-  internet access (Boliga, cvrapi.dk, the real OSM extract, bathing water, and address
-  validation via a real Datafordeler DAR account). Details below.
+- Branch: `main` on `KasperGroesLudvigsen/workshop`.
+- M0–M5 done. 55 tests pass.
+- **2026-09-15**: closed all 5 verification gaps from the previous handoff using real internet
+  access (Boliga, cvrapi.dk, the real OSM extract, bathing water, address validation via a
+  real Datafordeler DAR account) — then, same day, **replaced Boliga with Boligsiden** as the
+  listings source entirely, after Boliga's Cloudflare protection proved unreliable for a real
+  unattended run. Details below.
+- A real end-to-end run (`jobs/run_real.py`) works today: ~2,400 real fritidsbolig listings
+  across the configured region, scored against the real OSM store and bathing-water data.
 - M6–M10 not started.
 - Full milestone detail: `docs/PLAN.md`.
 
 ## What got verified/fixed 2026-09-15
 
-### 1. Boliga (`src/screener/fetch/boliga.py`, `config/thresholds.yaml`) — done
+### 0. Fetch layer swapped: Boliga → Boligsiden — done
 
-Confirmed live via the project's own `curl_cffi` transport (plain HTTP gets a Cloudflare
-challenge page, browser impersonation is required, not optional):
+Boliga's API sits behind Cloudflare and needs `curl_cffi` browser impersonation to get past
+at all — and even with that, a real `jobs/run_real.py` run hit repeated silent connection
+timeouts right after the exact same calls had worked moments earlier. Not a code bug; the
+data source itself is unreliable for an unattended job.
 
-- `boliga_property_type_fritidsbolig: 4` — confirmed by filtering a known holiday-cottage
-  postal range (4500-4581, Sjaellands Odde) by `propertyType=4`: 376/673 results, all small
-  (38-84 m²) cottages in known sommerhus villages (Nyrup, Ebbeloekke, Lumsaas).
-- `_PARAM_NAMES` and `meta.totalCount`/`results` as the total-count/listings-array keys —
-  all confirmed correct as originally guessed, no change needed.
-- **Bug fixed**: `normalize_listing`'s `url` field was always `None` — real responses carry
-  no `url`/`guid` field at all. Now builds `https://www.boliga.dk/bolig/{id}`, confirmed live
-  to 200 and redirect to the canonical listing page.
-- Note: the per-listing `propertyType` field in the response doesn't reliably echo back the
-  filter value used, so `discover_property_types()` can't read off a label from real data
-  (labels are absent from the payload). Codes were confirmed by comparing per-code result
-  totals for a known area instead — see the module docstring.
+Researched two known Danish open-source projects: [Dan Saattrup Smart's
+`bolig-ping`](https://github.com/saattrupdan/bolig-ping) queries **Boligsiden's own API**,
+`api.boligsiden.dk/search/cases`, with a plain `requests.get()` — no headers, no
+impersonation, confirmed live (clean 200s, no Cloudflare challenge, `per_page` up to 500
+works). Mikkel Krogsholm's `api-mapper` turned out to be a generic DevTools network-recorder,
+not a Boliga client — no reusable code there.
+
+`src/screener/fetch/boligsiden.py` (replacing `fetch/boliga.py`, now deleted) implements
+`BoligsidenClient`/`normalize_case`, improving on `bolig-ping`'s own implementation: loud
+truncation detection (`BoligsidenTruncatedResultsError`) instead of trusting page-count
+arithmetic, raw-response persistence to `db.py` (fetch/score separation), a
+`BoligsidenBlockedError` for 403/429, and a shared `RateLimiter`
+(`fetch/_rate_limit.py`, deduplicated out of `boliga.py`/`cvr.py`).
+
+- `fritidsbolig_address_type: "holiday house"` — confirmed via the API's own 400 error body,
+  which lists the full valid `addressTypes` enum.
+- No server-side postal-*range* filter exists (only an exact-match `zipCodes` list) — the
+  client fetches the whole national result set per `address_type` and filters by `zipCode`
+  client-side against `config/thresholds.yaml`'s `postal_ranges`. No bisection needed either:
+  Boligsiden has no small per-query cap the way Boliga did.
+- Real fields used directly, no candidate-tuple guessing needed: `coordinates.lat/lon` (WGS84,
+  top-level, no reprojection), `priceCash`, `housingArea`, `lotArea` (cleaner than any Boliga
+  candidate we had), `numberOfRooms`, `yearBuilt`, `daysOnMarket`, `address.{roadName,
+  houseNumber, zipCode, cityName}`.
+- **Real-world pagination finding**: fetching all ~7,300 national "holiday house" cases across
+  ~15 sequential requests (a few real seconds) hit exactly one case appearing on two
+  consecutive pages — the live, offset-paginated dataset shifted slightly mid-crawl. Fixed by
+  counting *unique* `caseID`s against `totalHits`, not raw item count; a duplicate is now
+  logged and skipped rather than treated as truncation.
+- `score/pipeline.py`'s output key `boliga_url` renamed to `listing_url`; the site template's
+  "Boliga" link label is now "Listing", pointing at Boligsiden's stable redirect URL
+  (`https://boligsiden.dk/viderestilling/{caseID}`, the same choice `bolig-ping` makes).
+- `curl_cffi` dropped from `pyproject.toml` — nothing else used it.
+- Verified end to end: `jobs/run_real.py` fetched 2,428 real listings across the full
+  configured region (postal ranges 3000-3699 + 4000-4990) in one run, no blocking, no
+  timeouts; 2,396 pass the water-only hard filter. Opened the generated site in a real browser
+  — real pins clustered along the coast exactly where fritidshuse actually are.
 
 ### 2. cvrapi.dk (`src/screener/fetch/cvr.py`) — done
 
@@ -91,7 +122,8 @@ wherever `resolve.pipeline.resolve_business_address(..., validator=...)` is call
 ## Decisions already made (don't re-litigate without new information)
 
 - **Stack**: Python, shapely 2.0 (STRtree, no separate `rtree` package needed) + pyproj +
-  DuckDB + pyosmium + curl_cffi + Jinja2.
+  DuckDB + pyosmium + Jinja2. Listings fetch uses plain `requests` (Boligsiden needs no
+  browser impersonation, unlike Boliga previously).
 - **CVR access**: cvrapi.dk (free, no registration) over the official Datafordeleren API
   (needs a service agreement) — a deliberate low-setup-cost choice, with the
   lookup-vs-enumeration trade-off noted below.
@@ -140,11 +172,11 @@ wherever `resolve.pipeline.resolve_business_address(..., validator=...)` is call
   This is the least urgent gap — steps 1-3 of the resolution pipeline should resolve most
   businesses before this ever triggers.
 
-## Test suite map (56 tests, all passing on fixtures)
+## Test suite map (55 tests, all passing on fixtures)
 
 | File | Covers |
 |---|---|
-| `test_boliga.py` | Sharding, 300-cap bisection, truncation assertion, 403 handling, `discover_property_types` |
+| `test_boligsiden.py` | Pagination + client-side postal-range filtering, truncation assertion, duplicate-`caseID` handling, 403/429 handling, field mapping |
 | `test_osm_extract.py` | pyosmium extraction, area computation, spatial queries against the synthetic fixture |
 | `test_water.py` | Lake area filtering, eligibility signals (badevand/swimming_area/beach), strict vs. loose divergence |
 | `test_bathing_water.py` | WFS-shaped GeoJSON schema validation, closed-station filtering, spatial site-to-lake matching, coastal sites excluded |
@@ -160,8 +192,11 @@ lake/coastline/marina layout looks like if you need more fixture data later.
 
 ## Suggested order for the next session
 
-1. Run the pipeline for one real postal shard against live Boliga + the real OSM store + real
-   CVR/address resolution; open the generated site and eyeball it against a real map. All
-   five pieces (Boliga, OSM, bathing water, cvrapi.dk, DAR address validation) are now
-   confirmed live individually — this is the first true end-to-end run.
-2. M6 → M7 (get the Brave key first) → M8 → M9 remainder → M10.
+A real end-to-end run against the full configured region is done (see above) — next up is
+business discovery, since that's what's missing before hangout/grocery are real hard filters:
+
+1. M6 (findsmiley) and/or M7 (web-search gap-fill, needs a Brave key) — either produces
+   candidate business names that can feed the *already-built* `resolve/pipeline.py` and
+   `DatafordelerAddressValidator` unchanged. Without candidate names, CVR/DAR can validate a
+   name into an address but nothing yet finds names to try.
+2. M8 (nightly orchestration) → M9 remainder → M10.

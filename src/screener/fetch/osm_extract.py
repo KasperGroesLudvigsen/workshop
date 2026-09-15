@@ -7,11 +7,9 @@ public pool, and OSM ``leisure=swimming_area`` (a lake-eligibility signal
 used in M4). These are geometry, not businesses — the brief notes staleness
 isn't a concern here the way it is for CVR/OSM POI businesses.
 
-``download_geofabrik_extract`` cannot be exercised in this sandbox (outbound
-network access here is restricted to package registries — see the module
-docstring in ``fetch/boliga.py`` for the same constraint). It is written
-against Geofabrik's plain, stable download URL scheme and should be run for
-real from the deployment box or a networked dev machine.
+``download_geofabrik_extract`` is confirmed live (see ``docs/HANDOFF.md``):
+a real ~500MB Denmark extract via Geofabrik's plain, stable download URL
+scheme, parsed into a real ``GeometryStore``.
 
 Known simplification: only simple *closed ways* are treated as polygons.
 Multipolygon *relations* (a minority of large/complex lakes, assembled from

@@ -17,10 +17,10 @@ DEFAULT_CONFIG_PATH = REPO_ROOT / "config" / "thresholds.yaml"
 
 
 @dataclass(frozen=True)
-class BoligaSettings:
+class BoligsidenSettings:
     base_url: str
     requests_per_second: float
-    max_results_per_query: int
+    per_page: int
     user_agent: str
 
 
@@ -33,10 +33,10 @@ class Settings:
     lake_strict: bool
     amenity_search_radius_km: float
     postal_ranges: list[tuple[int, int]]
-    boliga_property_type_fritidsbolig: int | None
+    fritidsbolig_address_type: str | None
     hard_filter_categories: list[str]
     informational_categories: list[str]
-    boliga: BoligaSettings
+    boligsiden: BoligsidenSettings
 
     @property
     def all_categories(self) -> list[str]:
@@ -45,7 +45,7 @@ class Settings:
 
 def load_settings(path: Path | str = DEFAULT_CONFIG_PATH) -> Settings:
     raw = yaml.safe_load(Path(path).read_text())
-    boliga_raw = raw["boliga"]
+    boligsiden_raw = raw["boligsiden"]
     return Settings(
         water_km=float(raw["water_km"]),
         hangout_km=float(raw["hangout_km"]),
@@ -54,13 +54,13 @@ def load_settings(path: Path | str = DEFAULT_CONFIG_PATH) -> Settings:
         lake_strict=bool(raw["lake_strict"]),
         amenity_search_radius_km=float(raw["amenity_search_radius_km"]),
         postal_ranges=[tuple(r) for r in raw["postal_ranges"]],
-        boliga_property_type_fritidsbolig=raw.get("boliga_property_type_fritidsbolig"),
+        fritidsbolig_address_type=raw.get("fritidsbolig_address_type"),
         hard_filter_categories=list(raw["hard_filter_categories"]),
         informational_categories=list(raw["informational_categories"]),
-        boliga=BoligaSettings(
-            base_url=boliga_raw["base_url"],
-            requests_per_second=float(boliga_raw["requests_per_second"]),
-            max_results_per_query=int(boliga_raw["max_results_per_query"]),
-            user_agent=boliga_raw["user_agent"],
+        boligsiden=BoligsidenSettings(
+            base_url=boligsiden_raw["base_url"],
+            requests_per_second=float(boligsiden_raw["requests_per_second"]),
+            per_page=int(boligsiden_raw["per_page"]),
+            user_agent=boligsiden_raw["user_agent"],
         ),
     )

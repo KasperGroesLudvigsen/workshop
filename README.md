@@ -1,6 +1,6 @@
 # Summer House Screener
 
-A filter, not a recommender. It pulls holiday-home ("fritidsbolig") listings from Boliga
+A filter, not a recommender. It pulls holiday-home ("fritidsbolig") listings from Boligsiden
 across Sjælland, Lolland, Falster, and Møn, drops everything that fails a small set of hard
 geographic requirements, and shows what survives on a single static, interactive map + table
 page — with live-adjustable thresholds, so tightening or loosening a requirement never means
@@ -49,8 +49,8 @@ named hangouts/grocery stores/marinas/playgrounds/pools/beaches found nearby.
 | Hangout (km) / Hangouts within | Distance to the nearest hangout, and how many fall within the current threshold |
 | Grocery (km) | Distance to the nearest grocery store |
 | Marina / Playground / Pool / Beach (km) | Informational-only distances — shown, never filtered on |
-| Price, m², Lot m², Rooms, Year | Listing basics, straight from Boliga |
-| Links | Boliga listing, Google Maps pin/aerial/street view, Apple Maps |
+| Price, m², Lot m², Rooms, Year | Listing basics, straight from Boligsiden |
+| Links | The Boligsiden listing, Google Maps pin/aerial/street view, Apple Maps |
 
 **Live filter controls** above the map/table recompute both the map and the table instantly,
 client-side, with no server round-trip and no re-score:
@@ -60,7 +60,7 @@ client-side, with no server round-trip and no re-score:
 
 ## How it's built
 
-**Fetch and score are deliberately separate stages.** Fetching (Boliga listings, the OSM
+**Fetch and score are deliberately separate stages.** Fetching (Boligsiden listings, the OSM
 extract, the bathing-water register, CVR business lookups) only ever writes raw data to disk;
 scoring only ever reads from that persisted raw data. Changing a threshold in
 `config/thresholds.yaml` and re-running the scorer reproduces a new result set from the same
@@ -79,7 +79,7 @@ trusted.
 
 | Source | Used for | Access |
 |---|---|---|
-| [Boliga](https://www.boliga.dk) | The listings themselves (fritidsbolig, i.e. property type code 4) | Undocumented JSON API, browser-impersonated |
+| [Boligsiden](https://www.boligsiden.dk) | The listings themselves (fritidsbolig, i.e. `addressType: "holiday house"`) | Public JSON API (`api.boligsiden.dk`), plain HTTP — no auth, no browser impersonation needed |
 | [Geofabrik](https://download.geofabrik.de) OSM extract for Denmark | Coastline, lakes/reservoirs, beaches, marinas, playgrounds, pools, swimming areas | Public `.osm.pbf` download |
 | [Danmarks Miljøportal](https://arealdata.miljoeportal.dk) — PULS bathing-water register | Officially designated bathing-water sites (lake eligibility signal) | Public GeoServer WFS, no auth |
 | [cvrapi.dk](https://cvrapi.dk) | Business name → registered company address/status | Free, unofficial CVR lookup API |
@@ -88,10 +88,14 @@ trusted.
 ## Current status
 
 The core pipeline — fetch, water/amenity scoring, business resolution, and the interactive
-site — is built and each data source above is confirmed working against live data. What's
-**not** built yet: automatic nightly re-runs with new-listing notifications, a Fødevarestyrelsen
-inspection-report cross-check ("Smiley"), web-search gap-fill for businesses missing from CVR
-and OSM, and deployment automation. Today, generating the site is a manual, one-off run.
+site — is built, and a real end-to-end run (`jobs/run_real.py`) against live Boligsiden data,
+the real OSM extract, and the real bathing-water register works today: ~2,400 real
+fritidsbolig listings across the configured region, scored and rendered. What's **not** built
+yet: hangout/grocery business *discovery* (CVR/DAR can validate a candidate name into an
+address, but nothing yet finds candidate names near a listing — so those two hard filters
+don't actually exclude anything today), automatic nightly re-runs with new-listing
+notifications, a Fødevarestyrelsen inspection-report cross-check ("Smiley"), web-search
+gap-fill, and deployment automation. Today, generating the site is a manual, one-off run.
 
 ---
 
@@ -161,25 +165,29 @@ It writes `data\site\index.html` — open it in a real browser (not just double-
 setups; a real browser is needed for the Leaflet map tiles to load) to see the interactive
 map and table.
 
-### 5. Using real data instead of fixtures
+### 5. Run it for real
 
-Each of these can be pulled for real (all confirmed working live):
-
-**The OSM geometry index** (coastline, lakes, beaches, marinas, playgrounds, pools) — a
-~500MB download and a couple of minutes to parse:
+First, pull the two static datasets the real pipeline needs (both one-time downloads —
+re-run only when you want fresher OSM/bathing-water data):
 
 ```powershell
 .venv\Scripts\python -m screener.fetch.osm_extract --download --pbf data\denmark-latest.osm.pbf --out data\osm_store.pkl
-```
-
-**The bathing-water register** (for lake eligibility):
-
-```powershell
 .venv\Scripts\python -c "from screener.fetch.bathing_water import download_badevand_dataset; download_badevand_dataset('data/badevand.geojson')"
 ```
 
-**Boliga listings** and **business resolution** (CVR + DAR address validation) are driven
-through `screener.fetch.boliga.BoligaClient` and `screener.resolve.pipeline.resolve_business_address`
-respectively — there isn't a single one-shot "fetch everything real" script yet (that's
-planned nightly-orchestration work), but both are directly importable and working against
-live data today. See `docs/HANDOFF.md` for the current state of each piece and what's next.
+The OSM extract is a ~500MB download and takes a couple of minutes to parse; the bathing-water
+pull is small and fast.
+
+Then run the real pipeline — a live Boligsiden fetch across the postal ranges in
+`config/thresholds.yaml`, scored against the real OSM/bathing-water data above:
+
+```powershell
+.venv\Scripts\python jobs\run_real.py
+```
+
+This writes real listings to `data\site\index.html` (~2,400 for the default Sjælland/
+Lolland/Falster/Møn scope). Business resolution (CVR + DAR address validation, via
+`screener.resolve.pipeline.resolve_business_address`) isn't wired into this script yet — there's
+no candidate-name discovery feeding it (see "Current status" above) — so hangout/grocery won't
+actually filter anything out yet, but every other column is real. See `docs/HANDOFF.md` for
+the current state of each piece and what's next.

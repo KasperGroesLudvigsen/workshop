@@ -1,10 +1,8 @@
 """M3 checkpoint demo: runs the full fetch(fixture)->score->site pipeline
-end to end and writes a real, openable static site.
-
-This sandbox has no outbound internet access to boliga.dk or Geofabrik (see
-fetch/boliga.py and fetch/osm_extract.py docstrings), so real Boliga
-listings and a real Denmark OSM extract aren't available here. This script
-proves the pipeline itself is correct and wired together end to end using:
+end to end and writes a real, openable static site, using synthetic
+fixtures rather than real listings/OSM data — see `jobs/run_real.py` for a
+real end-to-end run against live Boligsiden + a real OSM extract. This
+script proves the pipeline itself is correct and wired together, using:
 
   - tests/fixtures/sample.osm.xml: a small synthetic OSM extract (real
     Sjaelland coordinates near Soroe) with a coastline, an eligible lake
@@ -12,11 +10,6 @@ proves the pipeline itself is correct and wired together end to end using:
     a marina, a playground, and a pool.
   - a handful of synthetic listings placed relative to that fixture, some
     passing the water filter and some failing it.
-
-Once a real OSM extract and real Boliga listings are available (M1/M2 run
-for real on a networked machine), swap the two inputs below for
-`build_geometry_store(real_pbf_path)` and normalized real Boliga listings —
-nothing else in score/pipeline.py or site/build.py changes.
 """
 from __future__ import annotations
 
@@ -54,7 +47,7 @@ def build_demo_listings() -> list[dict]:
             "rooms": rooms,
             "build_year": year,
             "address": address,
-            "url": f"https://www.boliga.dk/bolig/{lid}",
+            "url": f"https://boligsiden.dk/viderestilling/{lid}",
         }
         for lid, lat, lon, price, size_m2, lot_m2, rooms, year, address in DEMO_LISTINGS
     ]
