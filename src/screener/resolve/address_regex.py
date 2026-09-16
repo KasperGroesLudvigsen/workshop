@@ -27,6 +27,7 @@ from typing import Protocol
 import requests
 import shapely.wkt
 
+from screener.fetch._rate_limit import RateLimiter
 from screener.geo.projection import geom_to_wgs84
 
 # Street name / number(+letter) / 4-digit postal code / town. Each word of
@@ -132,6 +133,12 @@ class DatafordelerAddressValidator:
     bitemporal ``virkningstid``/``registreringstid`` argument (confirmed
     live via a 400 without one) — ``virkningstid: now`` is passed on both
     calls to mean "as currently registered".
+
+    Rate-limited (default 5 req/sec, i.e. up to 2 real HTTP calls per
+    ``validate()``) — no documented DAR quota, but bulk business discovery
+    (``resolve/cvr_discovery.py``) can call ``validate()`` thousands of
+    times in a single run, and this was unthrottled until that usage
+    pattern existed.
     """
 
     BASE_URL = "https://graphql.datafordeler.dk/DAR/v3"
@@ -142,6 +149,7 @@ class DatafordelerAddressValidator:
         *,
         session: requests.Session | None = None,
         base_url: str = BASE_URL,
+        requests_per_second: float = 5.0,
     ):
         api_key = api_key or os.environ.get("DATAFORDELER_DAR_API_KEY")
         if not api_key:
@@ -151,8 +159,10 @@ class DatafordelerAddressValidator:
         self._api_key = api_key
         self._session = session or requests.Session()
         self._base_url = base_url
+        self._rate_limiter = RateLimiter(requests_per_second)
 
     def _query(self, query: str, variables: dict) -> dict:
+        self._rate_limiter.wait()
         resp = self._session.post(
             self._base_url,
             params={"apiKey": self._api_key},

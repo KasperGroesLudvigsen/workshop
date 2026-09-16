@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from screener.resolve.address_regex import (
@@ -139,3 +141,17 @@ def test_datafordeler_validator_requires_api_key(monkeypatch):
     monkeypatch.delenv("DATAFORDELER_DAR_API_KEY", raising=False)
     with pytest.raises(RuntimeError):
         DatafordelerAddressValidator(api_key=None)
+
+
+def test_datafordeler_validator_rate_limits_requests():
+    # 2 calls/sec -> the 2 real HTTP calls one validate() makes (Husnummer,
+    # then Adressepunkt) must be spaced at least ~0.5s apart.
+    session = _FakeDarSession(
+        husnummer_nodes=[{"adgangsadressebetegnelse": "Havnevej 1, 4243 Rude", "status": "3", "adgangspunkt": "id-1"}],
+        adressepunkt_nodes=[{"position": {"wkt": _KNOWN_POINT_WKT}}],
+    )
+    validator = DatafordelerAddressValidator(api_key="test-key", session=session, requests_per_second=2.0)
+    start = time.monotonic()
+    validator.validate(AddressCandidate("Havnevej 1", "4243", "Rude", "raw"))
+    elapsed = time.monotonic() - start
+    assert elapsed >= 0.4  # allow scheduling slack below the 0.5s floor

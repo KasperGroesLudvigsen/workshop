@@ -155,15 +155,18 @@ being real hard filters since M5.
 - `ice_cream` has no CVR discovery — the only plausible code (`"563010"`) is general
   non-alcoholic beverage service, not ice-cream-specific; using it would misclassify. Same gap
   as before, not a regression.
-- Verified end to end for real (postal 4200 alone, to avoid an unthrottled multi-hour crawl
-  against the full region — `DatafordelerAddressValidator` has no rate limiter, and hammering
-  it nationwide wasn't warranted just to prove the wiring): 43 real hangout candidates found,
-  35 validated (81%); 10 grocery candidates, 6 validated; similar for wine_shop/butcher.
-  Wired into `jobs/run_real.py` — hangout/grocery went from filtering nothing (every listing
-  passed trivially) to real hard filters (36/81 listings passed all three in that test).
-- A fast-follow worth doing before running this at full national scope: add a rate limiter to
-  `DatafordelerAddressValidator` (or batch/cache it), since real discovery volume means many
-  more validation calls than the address-resolution pipeline was originally sized for.
+- Verified end to end for real (postal 4200 alone, to avoid hammering `DatafordelerAddressValidator`
+  before it had a rate limiter): 43 real hangout candidates found, 35 validated (81%); 10
+  grocery candidates, 6 validated; similar for wine_shop/butcher. Wired into `jobs/run_real.py`
+  — hangout/grocery went from filtering nothing (every listing passed trivially) to real hard
+  filters (36/81 listings passed all three in that test).
+- **Done same day**: `DatafordelerAddressValidator` now takes a `requests_per_second` param
+  (default 5.0, reusing the shared `fetch/_rate_limit.RateLimiter`) — it was unthrottled until
+  bulk discovery gave it a usage pattern (thousands of calls per run) it wasn't originally
+  sized for. Verified live (a real `validate()` call still resolves correctly with the limiter
+  active) and with a fake-session test asserting two calls are actually spaced apart. A
+  full-region discovery run is now safe to attempt, though still untested at that scale — see
+  "Suggested order" below.
 
 ## Decisions already made (don't re-litigate without new information)
 
@@ -245,12 +248,14 @@ lake/coastline/marina layout looks like if you need more fixture data later.
 ## Suggested order for the next session
 
 Hangout/grocery are now real hard filters via CVR discovery (see item 6 above), verified for
-one postal code — but the full configured region hasn't been run with discovery wired in yet
-(deliberately, to avoid an unthrottled multi-hour DAR crawl — see the rate-limiter note above).
+one postal code — but the full configured region hasn't been run with discovery wired in yet.
+`DatafordelerAddressValidator` is now rate-limited (5 req/sec default), so this should be
+safe to attempt, just not yet actually run at that scale — likely still slow (thousands of
+businesses × up to 2 calls each), so consider a simple on-disk cache keyed by candidate
+address too, since the same street/postal/town recurs a lot across CVR hits.
 
-1. Add a rate limiter to `DatafordelerAddressValidator` (or a simple on-disk cache keyed by
-   candidate address, since the same street/postal/town recurs a lot across CVR hits), then
-   run `jobs/run_real.py` for the full region with discovery wired in for real.
+1. Run `jobs/run_real.py` for the full region with discovery wired in for real, and see how
+   long it actually takes at 5 req/sec before deciding whether caching is worth adding.
 2. M6 (findsmiley) and/or M7 (web-search gap-fill, needs a Brave key) — for businesses missing
    from CVR entirely, now a smaller residual gap. Either produces candidate names that feed
    the *already-built* `resolve/pipeline.py` unchanged.

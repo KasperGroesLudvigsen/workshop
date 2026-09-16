@@ -95,10 +95,10 @@ business directory works today, verified for one postal code. Hangout and grocer
 real hard filters, not just water. What's **not** built yet: businesses that aren't registered
 in CVR at all (a much smaller gap now — web-search gap-fill would still catch those),
 automatic nightly re-runs with new-listing notifications, a Fødevarestyrelsen
-inspection-report cross-check ("Smiley"), and deployment automation. A full-region run with
-discovery is pending a rate limiter for the address validator (running it unthrottled at
-national scale would mean tens of thousands of sequential validation calls). Today, generating
-the site is a manual, one-off run.
+inspection-report cross-check ("Smiley"), and deployment automation. The address validator is
+now rate-limited, so a full-region run with discovery should be safe to attempt, but hasn't
+been run at that scale yet — likely slow (thousands of businesses × up to 2 validation calls
+each). Today, generating the site is a manual, one-off run.
 
 ---
 
@@ -199,7 +199,6 @@ Then run the real pipeline — a live Boligsiden fetch across the postal ranges 
 This writes real listings to `data\site\index.html` for the full configured
 Sjælland/Lolland/Falster/Møn scope, with real hangout/grocery/fish_shop/wine_shop/butcher
 discovery wired in (`CVR_USERNAME`/`CVR_PASSWORD` required — see step 2). **Note**: at full
-regional scope this makes a large number of sequential address-validation calls with no rate
-limiter yet (see "Current status" above) — expect it to take a while, or narrow
-`postal_ranges` in `config/thresholds.yaml` first to try it quickly. See `docs/HANDOFF.md` for
-the current state of each piece and what's next.
+regional scope this makes a large number of rate-limited (5 req/sec) address-validation calls
+— expect it to take a while, or narrow `postal_ranges` in `config/thresholds.yaml` first to
+try it quickly. See `docs/HANDOFF.md` for the current state of each piece and what's next.

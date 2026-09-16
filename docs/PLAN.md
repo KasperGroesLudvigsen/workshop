@@ -153,10 +153,11 @@ end for CVR-registered businesses — OSM POIs / M7's web-search gap-fill are on
 for businesses *not* registered in CVR at all. `resolve/pipeline.py` implements all 4 steps
 with the address-register validation gate; `AddressValidator`'s real implementation,
 `DatafordelerAddressValidator`, is confirmed live against DAR's GraphQL v3 endpoint (see
-`docs/HANDOFF.md`) — reused unchanged by both the name-lookup and bulk-discovery paths.
-`score/pipeline.py` enforces hangout/grocery as real hard filters once a business directory
-is supplied — verified live for one postal code (see `docs/HANDOFF.md`); a full-region run
-with discovery wired in is pending a rate limiter for `DatafordelerAddressValidator` first.
+`docs/HANDOFF.md`) — reused unchanged by both the name-lookup and bulk-discovery paths, now
+rate-limited (5 req/sec default) since bulk discovery gives it far higher call volume than
+before. `score/pipeline.py` enforces hangout/grocery as real hard filters once a business
+directory is supplied — verified live for one postal code (see `docs/HANDOFF.md`); a
+full-region run with discovery wired in hasn't been attempted yet.
 
 **M6 — findsmiley.** ⬜ Not started. Attach inspection date + address cross-check as a
 freshness/secondary signal on food businesses already resolved in M5.
