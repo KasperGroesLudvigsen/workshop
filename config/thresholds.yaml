@@ -60,3 +60,25 @@ boligsiden:
   requests_per_second: 3.0
   per_page: 500
   user_agent: "summer-house-screener/0.1 (contact: groes.ludvigsen@gmail.com)"
+
+# DB07 branch-code prefixes per CVR-discoverable category, for bulk business
+# discovery via fetch/cvr_discovery.py (Erhvervsstyrelsen's cvr-permanent).
+#
+# IMPORTANT, found live 2026-09-16: DB07 branch codes were revised effective
+# 2025-01-01. A code that looks right from a plain text search (e.g. old
+# "561010" for restaurants) can return zero currently-active businesses --
+# every active company was migrated to the new code (e.g. "561110") when
+# the revision landed; only ceased/historical companies still carry the old
+# one. Every code below was confirmed live against *currently active*
+# ("sammensatStatus": "aktiv") companies specifically, not just a text
+# match against branchetekst -- confirm the same way before adding more.
+# ice_cream has no entry: the closest code (563010, "Udskaenkning af
+# ikke-alkoholiske drikkevarer") is beverage bars/cafes generally, not
+# ice-cream-specific, so using it would misclassify -- same gap as today,
+# not a regression.
+cvr_branch_codes:
+  hangout: ["561110", "561190", "563010", "563020"]  # Restauranter/caféer; øvrige spisesteder; udskænkning (alk./ikke-alk.)
+  grocery: ["471120", "471110"]        # Dagligvarer i supermarkeder/købmandsbutikker; kioskvarer
+  fish_shop: ["472300"]                # Detailhandel med fisk, krebsdyr og bløddyr
+  wine_shop: ["472500"]                # Detailhandel med drikkevarer (no wine-specific DB07 code exists)
+  butcher: ["472200"]                  # Detailhandel med kød og kødprodukter

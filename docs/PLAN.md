@@ -1,13 +1,13 @@
 # Summer House Location Screener — Build Plan
 
-> Status as of the last update: **M0–M5 done**, M6–M10 not started. As of
-> 2026-09-15, all 5 real-data verification gaps below are closed (listings,
-> cvrapi.dk, the real OSM extract, bathing water, and address validation via
-> a real Datafordeler DAR account) -- and, same day, the listings source
-> was switched from Boliga to Boligsiden after Boliga's Cloudflare
-> protection proved unreliable for a real run. A real end-to-end run
-> (`jobs/run_real.py`) works against the full configured region. See
-> `docs/HANDOFF.md` for the detailed status report.
+> Status as of the last update: **M0–M5 done**, plus real hangout/grocery
+> business discovery (2026-09-16, via Erhvervsstyrelsen's `cvr-permanent` --
+> a chunk of M6/M7's actual value without needing OSM-POI extraction or
+> Brave web-search). M6–M10 remainder not started. As of 2026-09-15, all 5
+> real-data verification gaps below are closed, and the listings source was
+> switched from Boliga to Boligsiden after Boliga's Cloudflare protection
+> proved unreliable for a real run. See `docs/HANDOFF.md` for the detailed
+> status report.
 
 ## Context
 
@@ -36,11 +36,13 @@ gap-fill. The listings source itself started as Boliga (M1) and was replaced wit
     _rate_limit.py         # shared RateLimiter (boligsiden.py + cvr.py)
     osm_extract.py         # Geofabrik download + osmium/pyosmium filtering into a local spatial store
     cvr.py                 # cvrapi.dk lookup client (name/vat search)
+    cvr_discovery.py       # cvr-permanent bulk enumeration by branch code + postal code (additive to cvr.py)
     bathing_water.py       # Miljøstyrelsen/EEA badevand dataset pull + spatial lake matching
     findsmiley.py          # NOT STARTED — per-business inspection report fetch (M6)
     web_search.py          # NOT STARTED — Brave search, per-town discovery (M7)
   /resolve                 # business name -> validated address pipeline (fixed, non-agentic)
     cvr_match.py           # step 1: fuzzy name match incl. binavne/trading names
+    cvr_discovery.py       # bulk counterpart to cvr_match.py: raw cvr-permanent hits -> validated businesses
     jsonld.py              # step 2: LocalBusiness/PostalAddress parse + findsmiley link-follow
     address_regex.py       # step 3: candidate extraction + address-register validation
     llm_extract.py         # step 4: last-resort structured extraction (Anthropic API)
@@ -68,7 +70,7 @@ gap-fill. The listings source itself started as Boliga (M1) and was replaced wit
   static_prep.py           # NOT STARTED — monthly/on-demand: OSM index, CVR pull+resolve, bathing-water pull (M8-ish)
   nightly.py               # NOT STARTED — fetch -> score -> diff -> notify (M8)
 /deploy                    # NOT STARTED — systemd units + Hetzner runbook (M10)
-/tests                     # 55 tests, all passing
+/tests                     # 62 tests, all passing
 ```
 
 ## Key design decisions (carried from the brief, made concrete)
@@ -142,14 +144,19 @@ differ between OSM and official sources). OSM `swimming_area` and beach-on-shore
 now run against the real M2 extract.
 
 **M5 — CVR + business resolution.** ✅ Done, **cvrapi.dk field names confirmed live
-2026-09-15** (and a real quota-vs-not-found bug fixed — see `docs/HANDOFF.md`). It still
-can't do bulk discovery (it's a lookup API, not an enumeration API; discovery of *candidate*
-names still needs OSM POIs or M7's web-search gap-fill). `resolve/pipeline.py` implements
-all 4 steps with the address-register validation gate; `AddressValidator`'s real
-implementation, `DatafordelerAddressValidator`, is confirmed live against DAR's GraphQL v3
-endpoint (see `docs/HANDOFF.md`) — pass an instance wherever `resolve_business_address` is
-called for real. `score/pipeline.py` enforces hangout/grocery as real hard filters once a
-business directory is supplied.
+2026-09-15** (and a real quota-vs-not-found bug fixed — see `docs/HANDOFF.md`). `cvrapi.dk`
+itself still can't do bulk discovery (it's a lookup API, not an enumeration API) — but
+**2026-09-16, `fetch/cvr_discovery.py` + `resolve/cvr_discovery.py` added real bulk discovery
+via Erhvervsstyrelsen's `cvr-permanent` system-til-system access** (branch code + postal code
+enumeration), wired into `jobs/run_real.py`. Hangout/grocery are now real hard filters end to
+end for CVR-registered businesses — OSM POIs / M7's web-search gap-fill are only still needed
+for businesses *not* registered in CVR at all. `resolve/pipeline.py` implements all 4 steps
+with the address-register validation gate; `AddressValidator`'s real implementation,
+`DatafordelerAddressValidator`, is confirmed live against DAR's GraphQL v3 endpoint (see
+`docs/HANDOFF.md`) — reused unchanged by both the name-lookup and bulk-discovery paths.
+`score/pipeline.py` enforces hangout/grocery as real hard filters once a business directory
+is supplied — verified live for one postal code (see `docs/HANDOFF.md`); a full-region run
+with discovery wired in is pending a rate limiter for `DatafordelerAddressValidator` first.
 
 **M6 — findsmiley.** ⬜ Not started. Attach inspection date + address cross-check as a
 freshness/secondary signal on food businesses already resolved in M5.

@@ -36,6 +36,7 @@ class Settings:
     fritidsbolig_address_type: str | None
     hard_filter_categories: list[str]
     informational_categories: list[str]
+    cvr_branch_codes: dict[str, list[str]]
     boligsiden: BoligsidenSettings
 
     @property
@@ -57,6 +58,7 @@ def load_settings(path: Path | str = DEFAULT_CONFIG_PATH) -> Settings:
         fritidsbolig_address_type=raw.get("fritidsbolig_address_type"),
         hard_filter_categories=list(raw["hard_filter_categories"]),
         informational_categories=list(raw["informational_categories"]),
+        cvr_branch_codes={k: list(v) for k, v in raw.get("cvr_branch_codes", {}).items()},
         boligsiden=BoligsidenSettings(
             base_url=boligsiden_raw["base_url"],
             requests_per_second=float(boligsiden_raw["requests_per_second"]),

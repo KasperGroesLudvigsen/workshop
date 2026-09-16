@@ -83,19 +83,22 @@ trusted.
 | [Geofabrik](https://download.geofabrik.de) OSM extract for Denmark | Coastline, lakes/reservoirs, beaches, marinas, playgrounds, pools, swimming areas | Public `.osm.pbf` download |
 | [Danmarks Miljøportal](https://arealdata.miljoeportal.dk) — PULS bathing-water register | Officially designated bathing-water sites (lake eligibility signal) | Public GeoServer WFS, no auth |
 | [cvrapi.dk](https://cvrapi.dk) | Business name → registered company address/status | Free, unofficial CVR lookup API |
+| Erhvervsstyrelsen `cvr-permanent` | Discovering hangout/grocery/etc. businesses by industry code + postal code — cvrapi.dk can't enumerate, only look up one name at a time | Free system-til-system access (username/password), plain HTTP, Elasticsearch |
 | [Datafordeleren](https://datafordeler.dk) — DAR (Danmarks Adresseregister) | Confirming a candidate address is real, and its coordinates | GraphQL, requires a free registered API key |
 
 ## Current status
 
-The core pipeline — fetch, water/amenity scoring, business resolution, and the interactive
-site — is built, and a real end-to-end run (`jobs/run_real.py`) against live Boligsiden data,
-the real OSM extract, and the real bathing-water register works today: ~2,400 real
-fritidsbolig listings across the configured region, scored and rendered. What's **not** built
-yet: hangout/grocery business *discovery* (CVR/DAR can validate a candidate name into an
-address, but nothing yet finds candidate names near a listing — so those two hard filters
-don't actually exclude anything today), automatic nightly re-runs with new-listing
-notifications, a Fødevarestyrelsen inspection-report cross-check ("Smiley"), web-search
-gap-fill, and deployment automation. Today, generating the site is a manual, one-off run.
+The core pipeline — fetch, water/amenity scoring, business discovery/resolution, and the
+interactive site — is built, and a real end-to-end run (`jobs/run_real.py`) against live
+Boligsiden data, the real OSM extract, the real bathing-water register, and a real discovered
+business directory works today, verified for one postal code. Hangout and grocery are now
+real hard filters, not just water. What's **not** built yet: businesses that aren't registered
+in CVR at all (a much smaller gap now — web-search gap-fill would still catch those),
+automatic nightly re-runs with new-listing notifications, a Fødevarestyrelsen
+inspection-report cross-check ("Smiley"), and deployment automation. A full-region run with
+discovery is pending a rate limiter for the address validator (running it unthrottled at
+national scale would mean tens of thousands of sequential validation calls). Today, generating
+the site is a manual, one-off run.
 
 ---
 
@@ -136,13 +139,21 @@ Create a `.env` file in the repo root (already gitignored — never commit it):
 
 ```
 DATAFORDELER_DAR_API_KEY=<your key>
+CVR_USERNAME=<your cvr-permanent username>
+CVR_PASSWORD=<your cvr-permanent password>
 ```
 
-Get a free key at [datafordeler.dk](https://datafordeler.dk): register an account (email
-login is enough), create an IT-system under "Datafordelerens Administration", generate an API
-key, and request access to **Danmarks Adresseregister (DAR)**'s GraphQL service specifically.
-This is only needed for resolving business addresses from raw text — the demo site below
-works without it.
+`DATAFORDELER_DAR_API_KEY`: get a free key at [datafordeler.dk](https://datafordeler.dk) —
+register an account (email login is enough), create an IT-system under "Datafordelerens
+Administration", generate an API key, and request access to **Danmarks Adresseregister
+(DAR)**'s GraphQL service specifically. Used to confirm a candidate address is real.
+
+`CVR_USERNAME`/`CVR_PASSWORD`: request free system-til-system access at
+[datacvr.virk.dk](https://datacvr.virk.dk/artikel/system-til-system-adgang-til-cvr-data)
+(roughly a three-week turnaround) — used to discover hangout/grocery/etc. businesses by
+industry code + postal code.
+
+Neither is needed for the demo site below.
 
 ### 3. Run the test suite
 
@@ -185,9 +196,10 @@ Then run the real pipeline — a live Boligsiden fetch across the postal ranges 
 .venv\Scripts\python jobs\run_real.py
 ```
 
-This writes real listings to `data\site\index.html` (~2,400 for the default Sjælland/
-Lolland/Falster/Møn scope). Business resolution (CVR + DAR address validation, via
-`screener.resolve.pipeline.resolve_business_address`) isn't wired into this script yet — there's
-no candidate-name discovery feeding it (see "Current status" above) — so hangout/grocery won't
-actually filter anything out yet, but every other column is real. See `docs/HANDOFF.md` for
+This writes real listings to `data\site\index.html` for the full configured
+Sjælland/Lolland/Falster/Møn scope, with real hangout/grocery/fish_shop/wine_shop/butcher
+discovery wired in (`CVR_USERNAME`/`CVR_PASSWORD` required — see step 2). **Note**: at full
+regional scope this makes a large number of sequential address-validation calls with no rate
+limiter yet (see "Current status" above) — expect it to take a while, or narrow
+`postal_ranges` in `config/thresholds.yaml` first to try it quickly. See `docs/HANDOFF.md` for
 the current state of each piece and what's next.
