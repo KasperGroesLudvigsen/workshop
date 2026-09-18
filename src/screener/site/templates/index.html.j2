@@ -28,6 +28,11 @@
   a.ext-link { margin-right: 6px; font-size: 11px; }
   .reason-none { color: #a33; }
   .reason-ok { color: #2a7a3b; }
+  button.action-btn { border: 1px solid #ccc; background: #fff; border-radius: 4px; padding: 2px 5px; font-size: 12px; cursor: pointer; margin-right: 4px; }
+  button.action-btn:hover { background: #f0efe9; }
+  button.action-btn.active { background: #fff2c2; border-color: #e0b400; }
+  tr.row-liked { background: #fffbea; }
+  tr.row-hidden { opacity: 0.5; }
 </style>
 </head>
 <body>
@@ -40,6 +45,8 @@
   <label>Hangout (km) <input type="number" id="f-hangout" step="0.5" value="{{ config.hangout_km }}"></label>
   <label>Grocery (km) <input type="number" id="f-grocery" step="0.5" value="{{ config.grocery_km }}"></label>
   <label class="checkbox"><input type="checkbox" id="f-lake-strict" {% if config.lake_strict %}checked{% endif %}> Strict lake eligibility</label>
+  <label class="checkbox"><input type="checkbox" id="f-liked-only"> Show only liked</label>
+  <label class="checkbox"><input type="checkbox" id="f-show-hidden"> Show hidden</label>
   <label>Min price <input type="number" id="f-price-min"></label>
   <label>Max price <input type="number" id="f-price-max"></label>
   <label>Min rooms <input type="number" id="f-rooms-min"></label>
@@ -53,6 +60,7 @@
     <table id="table">
       <thead>
         <tr>
+          <th>★</th>
           <th data-key="water_open_loose">Open water (km)</th>
           <th data-key="water_sea">Sea (km)</th>
           <th data-key="water_lake">Lake (km)</th>
@@ -79,6 +87,37 @@
 <script>
 const LISTINGS = {{ listings_json|safe }};
 const DEFAULT_CONFIG = {{ config_json|safe }};
+
+const STORAGE_KEY_LIKED = 'summer-house-screener:liked';
+const STORAGE_KEY_HIDDEN = 'summer-house-screener:hidden';
+
+function loadIdSet(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch (e) {
+    return new Set(); // private browsing / storage disabled -- degrade to "nothing persists"
+  }
+}
+function saveIdSet(key, set) {
+  try {
+    localStorage.setItem(key, JSON.stringify([...set]));
+  } catch (e) { /* ignore -- same degrade-gracefully reasoning as loadIdSet */ }
+}
+
+let likedIds = loadIdSet(STORAGE_KEY_LIKED);
+let hiddenIds = loadIdSet(STORAGE_KEY_HIDDEN);
+
+function toggleLiked(id) {
+  if (likedIds.has(id)) likedIds.delete(id); else likedIds.add(id);
+  saveIdSet(STORAGE_KEY_LIKED, likedIds);
+  render();
+}
+function toggleHidden(id) {
+  if (hiddenIds.has(id)) hiddenIds.delete(id); else hiddenIds.add(id);
+  saveIdSet(STORAGE_KEY_HIDDEN, hiddenIds);
+  render();
+}
 
 let map = null;
 if (typeof L !== 'undefined') {
@@ -133,6 +172,8 @@ function deriveRow(listing, cfg) {
     poolKm: categoryDistance(listing.pool),
     beachKm: categoryDistance(listing.beach),
     passes: passesWater && passesHangout && passesGrocery,
+    liked: likedIds.has(listing.listing_id),
+    hidden: hiddenIds.has(listing.listing_id),
   };
 }
 
@@ -142,6 +183,8 @@ function currentConfig() {
     hangoutKm: parseFloat(document.getElementById('f-hangout').value),
     groceryKm: parseFloat(document.getElementById('f-grocery').value),
     lakeStrict: document.getElementById('f-lake-strict').checked,
+    likedOnly: document.getElementById('f-liked-only').checked,
+    showHidden: document.getElementById('f-show-hidden').checked,
     priceMin: parseFloat(document.getElementById('f-price-min').value) || null,
     priceMax: parseFloat(document.getElementById('f-price-max').value) || null,
     roomsMin: parseFloat(document.getElementById('f-rooms-min').value) || null,
@@ -196,6 +239,8 @@ function sortRows(rows) {
 function render() {
   const cfg = currentConfig();
   let rows = LISTINGS.map(l => deriveRow(l, cfg)).filter(r => r.passes).filter(r => applyExtraFilters(r, cfg));
+  rows = rows.filter(r => cfg.showHidden || !r.hidden);
+  if (cfg.likedOnly) rows = rows.filter(r => r.liked);
   rows = sortRows(rows);
 
   document.getElementById('visible-count').textContent = rows.length;
@@ -216,7 +261,10 @@ function render() {
     }
 
     const tr = document.createElement('tr');
+    if (row.liked) tr.classList.add('row-liked');
+    if (row.hidden) tr.classList.add('row-hidden');
     tr.innerHTML = `
+      <td>${actionButtonsHtml(row)}</td>
       <td>${fmt(row.openWater)}</td>
       <td>${fmt(l.water.sea_distance_km)}</td>
       <td>${row.lakeCandidate ? fmt(row.lakeCandidate.distance_km) : '—'}</td>
@@ -260,8 +308,19 @@ function popupHtml(row) {
       Playground: ${namesList(l.playground, 15)}<br>
       Pool: ${namesList(l.pool, 15)}<br>
       Beach: ${namesList(l.beach, 15)}<br>
+      ${actionButtonsHtml(row)}<br>
       ${linksHtml(l)}
     </div>
+  `;
+}
+
+function actionButtonsHtml(row) {
+  const id = row.listing.listing_id;
+  const likeLabel = row.liked ? '★ Liked' : '☆ Like';
+  const hideLabel = row.hidden ? '🔁 Unhide' : '🙈 Hide';
+  return `
+    <button type="button" class="action-btn${row.liked ? ' active' : ''}" onclick="toggleLiked('${id}')">${likeLabel}</button>
+    <button type="button" class="action-btn${row.hidden ? ' active' : ''}" onclick="toggleHidden('${id}')">${hideLabel}</button>
   `;
 }
 
