@@ -57,6 +57,16 @@ client-side, with no server round-trip and no re-score:
 - The three hard-filter distances (water/hangout/grocery), each independently adjustable
 - The strict/loose lake-eligibility toggle
 - Price range, minimum rooms, minimum m², minimum lot size, minimum build year
+- "Show only liked" and "Show hidden" — see "Liking and hiding listings" below
+
+### Liking and hiding listings
+
+Each row (and map popup) has a ★ **Like** and a 🙈 **Hide** button. Liked listings get a
+highlight and can be filtered to on their own ("Show only liked"). Hidden listings drop out
+of the table and map by default — not deleted, just out of the way — and reappear (dimmed)
+when "Show hidden" is checked. This is stored in your browser's `localStorage`, not on disk
+or in the data itself, so it's tied to whatever URL/path you open the site from — see
+"Reopening the app" below for why that matters.
 
 ## How it's built
 
@@ -202,3 +212,28 @@ discovery wired in (`CVR_USERNAME`/`CVR_PASSWORD` required — see step 2). **No
 regional scope this makes a large number of rate-limited (5 req/sec) address-validation calls
 — expect it to take a while, or narrow `postal_ranges` in `config/thresholds.yaml` first to
 try it quickly. See `docs/HANDOFF.md` for the current state of each piece and what's next.
+
+### 6. Reopening the app later
+
+`data\site\index.html` is a self-contained static file — all listing data is embedded in it
+directly, so just *opening* it (as opposed to regenerating it) never fetches anything over
+the network and is instant. You only need to re-run step 5 when you actually want fresher
+data.
+
+Serve it locally with Python's built-in server, from the repo root:
+
+```powershell
+cd data\site
+..\..\.venv\Scripts\python -m http.server 8000
+```
+
+Then open **http://localhost:8000/index.html**. Leave that terminal window open — closing it
+stops the server. To start it again later (after a reboot, or if you closed the terminal),
+just re-run the same two commands.
+
+**Always use the same port (`8000` above, or whatever you pick).** Liked/hidden listings are
+stored in your browser, tied to the exact URL you open — a different port looks like a
+completely different site to the browser, and your likes/hides won't carry over. Re-running
+`jobs\run_real.py` to refresh the data is fine and doesn't affect this — it overwrites the
+same file the server is already pointed at, so reload the page and your liked/hidden state
+is still there, now against fresh listings.
