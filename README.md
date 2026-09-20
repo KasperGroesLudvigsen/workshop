@@ -85,6 +85,52 @@ geocoded from raw, unvalidated text, including LLM output: every candidate, rega
 which step produced it, passes through the same real address-register lookup before it's
 trusted.
 
+### Data flow: from a Boligsiden listing to the display page
+
+1. **Fetch** — `BoligsidenClient` pulls raw fritidsbolig cases from the Boligsiden API for the
+   configured postal ranges, and `normalize_case` turns each one into the listing shape the
+   rest of the pipeline expects (address, price, m², coordinates, etc).
+2. **Build the business directory** — independently of any one listing, hangout/grocery/etc.
+   businesses are discovered once for the whole region: `CvrPermanentClient` enumerates
+   candidates from CVR by industry code, each is resolved to a validated, address-register-confirmed
+   location (see "Business resolution" above), and OSM business POIs are extracted and merged
+   in alongside them into a single `business_directory`.
+
+   *How OSM businesses get matched to a listing.* Extraction and per-listing matching are two
+   separate steps, and neither is a postal-code filter or a radius-bounded walk of the map data:
+   - **Extraction is nationwide and listing-agnostic.** `extract_business_pois` (`fetch/osm_poi.py`)
+     makes one pyosmium pass over the *entire* Denmark `.osm.pbf` extract and pulls out every
+     named node/way anywhere in the country whose `amenity`/`shop` tag matches a known category
+     (e.g. `amenity=restaurant` → `hangout`, `shop=supermarket` → `grocery`) — with no notion of
+     any listing, postal code, or distance yet.
+   - **Indexing.** `build_business_directory` (`geo/business_directory.py`) turns each category's
+     nationwide point list into a `Layer` (`geo/store.py`): points are projected into a metric CRS
+     and loaded into a `shapely` `STRtree` (an R-tree spatial index) — one index per category,
+     covering all of Denmark.
+   - **Per-listing lookup happens only at query time**, against that pre-built index:
+     `Layer.nearest(point)` returns the closest business in a category and its distance;
+     `Layer.within(point, radius_m)` returns every business within the current threshold by first
+     using the STRtree to fetch candidates inside a bounding buffer, then exact-filtering that
+     small candidate set by real distance.
+
+   In short: retrieve everything once, index it, then query the index per listing — the distance
+   threshold only ever applies at query time against the index, never during extraction.
+3. **Score** — `score_listings` takes the raw listings, the OSM geometry store (coastline,
+   lakes, beaches, marinas, ...), the bathing-water lookup, and the business directory, and for
+   each listing computes distances to the nearest open water (with the sea/lake/eligibility
+   breakdown), hangout, grocery store, and the informational-only categories (marina,
+   playground, pool, beach) — plus a `passed` flag from the three hard filters in
+   `config/thresholds.yaml`. This is the "enrichment" step: a listing goes in with just its
+   Boligsiden fields and comes out with every distance/eligibility field the map and table need.
+4. **Sort** — `sort_scored_listings` orders the enriched listings (surviving ones first).
+5. **Build the site** — `build_site` renders the enriched, sorted listings straight into a
+   single self-contained `data/site/index.html`, with all listing data embedded directly in the
+   page (see "Reopening the app later" below) — nothing is fetched again just to view it.
+
+`jobs/run_real.py` runs all five steps end to end against live data; `jobs/demo_m3.py` runs the
+same pipeline against synthetic listings and a small fixture, for a fast, network-free check
+that everything is wired correctly.
+
 ## Data sources
 
 | Source | Used for | Access |
