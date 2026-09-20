@@ -5,8 +5,8 @@ Read this first if you're picking this project back up.
 ## tl;dr
 
 - Branch: `main` on `KasperGroesLudvigsen/workshop`.
-- M0–M5 done, plus real hangout/grocery business discovery (a chunk of M6/M7's actual value,
-  without needing OSM-POI extraction or Brave web-search). 62 tests pass.
+- M0–M5 done, plus real hangout/grocery business discovery, plus M7 (business discovery
+  beyond CVR) mostly done. 82 tests pass.
 - **2026-09-15**: closed all 5 verification gaps from the previous handoff using real internet
   access, then **replaced Boliga with Boligsiden** as the listings source entirely, after
   Boliga's Cloudflare protection proved unreliable for a real unattended run.
@@ -14,11 +14,21 @@ Read this first if you're picking this project back up.
   system-til-system access (bulk enumeration by branch code + postal code — something
   cvrapi.dk, still used for name lookups, fundamentally can't do). Hangout/grocery are now
   *real* hard filters end to end, not just water. Details below.
+- **2026-09-19**: user spot-checked real Bisserup businesses missing from discovery, leading
+  to two real fixes — a postal-code parser bug affecting *every* address validation call in
+  the project, and a whole missing CVR index (`produktionsenhed`) for chain/cooperative
+  store locations — plus a genuine structural blind spot (a business run through a
+  property-holding company registered elsewhere) that no CVR fix can close. See item 7 below.
+- **2026-09-19 (same day)**: built M7 — OSM POI discovery (primary, no address-validation
+  gate needed) plus a Tavily web-search fallback (free, no card, unlike the
+  originally-assumed Brave Search API which lost its free tier). OSM POI extraction confirmed
+  against the real local `data/denmark-latest.osm.pbf`: both Bisserup test cases found, plus
+  a bonus hit. See item 8 below. One open item: add `TAVILY_API_KEY` to exercise the
+  web-search fallback for real.
 - A real end-to-end run (`jobs/run_real.py`) works today: real fritidsbolig listings across
   the configured region, scored against the real OSM store, bathing-water data, and a real
-  discovered business directory.
-- M6 (findsmiley) and M7 (web-search gap-fill) remain for businesses *not* in CVR at all —
-  a much smaller residual gap than before.
+  discovered business directory (CVR + OSM POIs).
+- M6 (findsmiley) remains, now the only real residual gap alongside M7's two open items above.
 - M8–M10 not started.
 - Full milestone detail: `docs/PLAN.md`.
 
@@ -164,9 +174,105 @@ being real hard filters since M5.
   (default 5.0, reusing the shared `fetch/_rate_limit.RateLimiter`) — it was unthrottled until
   bulk discovery gave it a usage pattern (thousands of calls per run) it wasn't originally
   sized for. Verified live (a real `validate()` call still resolves correctly with the limiter
-  active) and with a fake-session test asserting two calls are actually spaced apart. A
-  full-region discovery run is now safe to attempt, though still untested at that scale — see
-  "Suggested order" below.
+  active) and with a fake-session test asserting two calls are actually spaced apart.
+
+### 7. Two real bugs found by spot-checking known Bisserup businesses — done, 2026-09-19
+
+The user knew Bisserup has a supermarket, a kro, and an ice cream/grill place, none of which
+showed up as discovered businesses. Investigating all three against live `cvr-permanent`/DAR
+found two distinct, fixable bugs, plus one thing that genuinely isn't fixable on our end:
+
+- **Bug A (`resolve/address_regex.py`'s `_parse_postal_from_betegnelse`), the bigger one**:
+  broke on any DAR address with a "supplerende bynavn" (a hamlet/village name DAR inserts
+  between the street and the postal code — very common for small places within a larger
+  postal town, e.g. `"Bisserup Byvej 3, Bisserup, 4243 Rude"`). Taking the *first*
+  comma-separated segment mis-parsed the bynavn itself as the postal code, failed
+  `isdigit()`, and silently dropped an otherwise perfectly valid, Gaeldende address. Fixed by
+  taking the *last* segment instead. This gate is used by every address validation in the
+  project (both `resolve/pipeline.py`'s cvrapi.dk lookups and every discovery hit), so this
+  one-line fix likely recovers real businesses region-wide, not just in Bisserup.
+- **Bug B (`fetch/cvr_discovery.py`)**: only queried the CVR `virksomhed` (company) index.
+  The real grocery store is registered as `Brugsen Holsteinborg`, branch code `471120`
+  (already in our mapping, unchanged), status `Aktiv` — but as a **`produktionsenhed`**
+  (physical branch/P-unit), a separate index never queried before. Normal pattern for
+  chain/cooperative stores: the legal company can be registered anywhere, but each physical
+  branch is its own P-unit with its own real address. `discover_active_businesses` now
+  queries both indices (produktionsenhed's field paths differ:
+  `VrproduktionsEnhed.produktionsEnhedMetadata.*`, confirmed live via `_mapping`) and merges
+  them, deduping by physical address since a small single-location business's own P-unit is
+  often at the identical address as its `virksomhed` entry.
+- **Correction, 2026-09-19 (same day)**: the "Ophørt" claim above was wrong. It came from a
+  name-based CVR search that matched a different, genuinely-closed historical registration
+  sharing a similar name — not the kro's real current operator. The user provided a real
+  receipt (`BISSERUP STRAND KRO, BISSERUP HAVNEVEJ 67, 4243 RUDE, CVR-nr. 35819894`); looking
+  that CVR number up directly shows status `NORMAL` (active), registered to
+  **`EJENDOMSSELSKABET BSK ApS`**, a property-holding company registered in Borup — a
+  different town — under a property-administration branch code, not a restaurant one. This is
+  a genuine, structural blind spot no amount of CVR fixing can close: branch-code discovery
+  has no way to know a property-holding company in one town operates a restaurant in another.
+  See item 8 below for the fix (OSM POI discovery, which doesn't go through CVR at all). Lesson:
+  verify a specific claim against the actual entity (CVR number, receipt, etc), not a name
+  search that can silently match the wrong record.
+- Verified live end to end both ways: `validate()` on the real address returned `None` before
+  Bug A's fix, a real `ValidatedAddress` after; `discover_active_businesses` found zero
+  grocery candidates in postal 4243 before Bug B's fix, `Brugsen Holsteinborg` after. Full
+  pipeline (discover → resolve → validate) confirmed producing a real `ResolvedBusiness` for
+  it. Not yet re-run at full-region scale — see "Suggested order" below.
+
+### 8. M7: business discovery beyond CVR (`fetch/osm_poi.py`, `fetch/web_search.py`, `resolve/web_discovery.py`) — mostly done, 2026-09-19
+
+Implements the plan at (formerly) `giggly-weaving-dawn.md`, test-driven against the two real
+Bisserup businesses from item 7's correction. Two independent mechanisms, primary + fallback,
+neither using the originally-assumed Brave Search API (it dropped its free tier Feb 2026 —
+card required, then metered billing). Researched free alternatives broadly first: DuckDuckGo
+Instant Answer isn't general search; Google Custom Search is closed to new signups; Bing
+Search API was retired by Microsoft Aug 2025; SearXNG needs self-hosting for reliability;
+most others require a card. Tavily is the one genuinely free option (1,000 credits/month,
+recurring, no card).
+
+- **Primary: `fetch/osm_poi.py`** — a separate `osmium.SimpleHandler` (deliberately not
+  touching the existing, tested `OsmHandler` in `osm_extract.py`) that pulls named
+  nodes/ways tagged `amenity=restaurant/fast_food/cafe/bar/pub/ice_cream` or
+  `shop=supermarket/convenience/grocery/seafood/alcohol/wine/confectionery/butcher` straight
+  into `ResolvedBusiness` records with `source_step="osm_poi"` and **no address-validation
+  gate** — intentional, not a shortcut: OSM POIs are already-placed real geometry from a
+  structured dataset (the same trust level `marina`/`playground`/`beach` already get from the
+  same PBF), not raw text being geocoded. Confirmed live against the public Overpass API
+  *before* writing this module: querying named amenities near Bisserup immediately returned
+  `Bisserup Strand Kro` (`amenity=restaurant`) and `Bisserup Is og Grillhus`
+  (`amenity=fast_food`) by their real names with exact coordinates — plus two businesses we
+  didn't even know to look for (`Bisserup Fiskebar`, `Bisserup Camping Kiosken`) and the
+  grocery store under its real brand name `Dagli'Brugsen`, not the legal cooperative name CVR
+  uses. 6 unit tests against a synthetic fixture (`tests/fixtures/business_pois.osm.xml`,
+  built from the real confirmed-live Overpass coordinates) all pass — node extraction, way
+  centroid computation, unnamed/irrelevant-tag skipping. Wired into
+  `jobs/run_real.py`'s `_discover_business_directory`: runs after CVR discovery, results
+  concatenated into `businesses_by_category` per category (no cross-source dedup with CVR
+  yet — a cosmetic duplicate risk, e.g. `Dagli'Brugsen` vs. `Brugsen Holsteinborg` both under
+  `grocery`, not a correctness bug). **Confirmed against the real local
+  `data/denmark-latest.osm.pbf`, 2026-09-19**: found both `Bisserup Strand Kro`
+  (55.1996228, 11.4932746) and `Bisserup Is og Grillhus` (55.199526, 11.494104), matching the
+  earlier live-Overpass coordinates almost exactly, plus a bonus hit (`Bisserup Fiskebar`) —
+  region-wide totals: 14,976 hangout / 3,884 grocery / 883 butcher / 808 ice_cream /
+  677 wine_shop / 149 fish_shop POIs. Takes **~20 minutes** for the full pass (a second,
+  separate osmium pass over the whole Denmark PBF, on top of `osm_extract.py`'s own pass) —
+  fine for a one-shot `run_real.py` run today, but worth remembering if this ever needs to
+  run more often than nightly.
+- **Fallback: `fetch/web_search.py` (`TavilyClient`) + `resolve/web_discovery.py`** — for
+  whatever OSM genuinely doesn't have tagged. `TavilyClient.search(query)` hits
+  `POST https://api.tavily.com/search` with `Authorization: Bearer <key>`, same
+  raise-if-unset env-var convention as every other credential here
+  (`TAVILY_API_KEY`), rate-limited, raw responses persisted via `db.py`. `web_discovery.py`
+  builds a per-category Danish query from the new `web_search_terms` config
+  (`config/thresholds.yaml`, parallel to `cvr_branch_codes`), and for each result runs the
+  *same* JSON-LD → regex → LLM cascade `resolve/pipeline.py` already uses, gated by the same
+  `AddressValidator` — unlike OSM POIs, a search result's page really is raw text that could
+  be wrong. 10 unit tests (fake transport + fake page fetcher, mirroring
+  `test_cvr_discovery.py`'s pattern) all pass. **Not yet exercised against the real Tavily
+  API** — `TAVILY_API_KEY` isn't in `.env` yet (sign up free at tavily.com, no card, ~2 min);
+  this is the blocking prerequisite for the plan's test-case verification step 2 (literally
+  searching for "Bisserup Strand Kro"/"Bisserup Is og Grillhus" and confirming the full chain
+  resolves and validates).
 
 ## Decisions already made (don't re-litigate without new information)
 
@@ -193,13 +299,12 @@ being real hard filters since M5.
   Fødevarestyrelsen inspection report (found via the findsmiley link `resolve/jsonld.py`'s
   `find_findsmiley_link` already extracts during JSON-LD parsing) and attach inspection date
   + address cross-check to resolved businesses.
-- **M7 (web-search gap-fill)**: `fetch/web_search.py` doesn't exist. Needs a **Brave Search
-  API key** (not yet obtained — get one before starting this). Now a smaller residual gap
-  than before item 6 above: CVR discovery covers every *registered* business in a category;
-  this is only for businesses missing from CVR entirely (informal/seasonal food stalls,
-  etc). Search per town, not per listing; feed discovered names through the *existing*
-  `resolve/pipeline.py` unchanged — never skip the address-register gate just because a name
-  came from search.
+- **M7 (business discovery beyond CVR) — see item 8 above**: OSM POI discovery
+  (`fetch/osm_poi.py`) is built, unit-tested, wired into `run_real.py`, and confirmed
+  against the real `data/denmark-latest.osm.pbf` (both Bisserup test cases found). The
+  Tavily web-search fallback (`fetch/web_search.py`, `resolve/web_discovery.py`) is built and
+  unit-tested with fakes, but not yet exercised against the real API — needs
+  `TAVILY_API_KEY` in `.env`.
 - **M8 (nightly orchestration)**: `jobs/nightly.py` doesn't exist. Should tie together fetch
   (M1) → score (M3-M7) → diff against yesterday (use `db.py`'s `save_scored_listings` and
   `passing_listing_ids`, already implemented) → notify via ntfy on new passes.
@@ -217,7 +322,9 @@ being real hard filters since M5.
 
 ## Credentials / access needed from the user (not solvable by writing more code)
 
-- **Brave Search API key** — required before M7 can do anything for real.
+- **`TAVILY_API_KEY`** — sign up free at tavily.com (no card, ~2 min), add to `.env`.
+  Required before M7's web-search fallback (`fetch/web_search.py`) can be exercised for real;
+  OSM POI discovery (M7's primary mechanism) needs no new credential.
 - **Hetzner account + server** — required before M10's deployment steps can be executed
   (the runbook can be written without it, but not run).
 - **ntfy topic name** — trivial, just needs the user (or you) to pick a string.
@@ -226,13 +333,16 @@ being real hard filters since M5.
   This is the least urgent gap — steps 1-3 of the resolution pipeline should resolve most
   businesses before this ever triggers.
 
-## Test suite map (62 tests, all passing on fixtures)
+## Test suite map (82 tests, all passing on fixtures)
 
 | File | Covers |
 |---|---|
 | `test_boligsiden.py` | Pagination + client-side postal-range filtering, truncation assertion, duplicate-`caseID` handling, 403/429 handling, field mapping |
-| `test_cvr_discovery.py` | cvr-permanent query shape (branch-code/postal-range `should` clauses, status filter), pagination, result-window/blocked-status handling, and the resolve-layer mapping (validated vs. dropped hits, missing-field skip) |
+| `test_cvr_discovery.py` | cvr-permanent query shape for *both* `virksomhed`/`produktionsenhed` indices, pagination, cross-index dedup by physical address, result-window/blocked-status handling, and the resolve-layer mapping (validated vs. dropped hits, missing-field skip) |
 | `test_osm_extract.py` | pyosmium extraction, area computation, spatial queries against the synthetic fixture |
+| `test_osm_poi.py` | OSM POI tag→category mapping, node + way(centroid) extraction, unnamed/irrelevant-tag skipping, against `tests/fixtures/business_pois.osm.xml` (real Bisserup coordinates) |
+| `test_web_search.py` | `TavilyClient` request shape (Bearer auth, query body), result parsing, blocked-status handling, missing-key error |
+| `test_web_discovery.py` | Per-town/category query building, the JSON-LD → regex → LLM cascade against fake search results and pages, unvalidated-candidate dropping, page-fetch-failure handling |
 | `test_water.py` | Lake area filtering, eligibility signals (badevand/swimming_area/beach), strict vs. loose divergence |
 | `test_bathing_water.py` | WFS-shaped GeoJSON schema validation, closed-station filtering, spatial site-to-lake matching, coastal sites excluded |
 | `test_cvr.py`, `test_cvr_match.py` | CVR client parsing, quota/ban vs. not-found, fuzzy name matching, closed-business rejection |
@@ -247,17 +357,19 @@ lake/coastline/marina layout looks like if you need more fixture data later.
 
 ## Suggested order for the next session
 
-Hangout/grocery are now real hard filters via CVR discovery (see item 6 above), verified for
-one postal code — but the full configured region hasn't been run with discovery wired in yet.
-`DatafordelerAddressValidator` is now rate-limited (5 req/sec default), so this should be
-safe to attempt, just not yet actually run at that scale — likely still slow (thousands of
-businesses × up to 2 calls each), so consider a simple on-disk cache keyed by candidate
-address too, since the same street/postal/town recurs a lot across CVR hits.
+`jobs/run_real.py` has been run at full-region scale with discovery wired in (2026-09-19:
+2,407 real listings, 1,311 passing all hard filters; ~10 min end to end at 5 req/sec — fast
+enough that a validation-result cache hasn't been needed yet). That run predates item 7's two
+bug fixes above, though.
 
-1. Run `jobs/run_real.py` for the full region with discovery wired in for real, and see how
-   long it actually takes at 5 req/sec before deciding whether caching is worth adding.
-2. M6 (findsmiley) and/or M7 (web-search gap-fill, needs a Brave key) — for businesses missing
-   from CVR entirely, now a smaller residual gap. Either produces candidate names that feed
-   the *already-built* `resolve/pipeline.py` unchanged.
-3. M8 (nightly orchestration) → M9 remainder (including the fish_shop/wine_shop/butcher table
+1. Once `TAVILY_API_KEY` is added, run the Tavily fallback against the two Bisserup test
+   cases by name (item 8's one open item) to close out M7's test-case verification.
+2. Re-run `jobs/run_real.py` for the full region now that items 7's fixes and item 8's OSM
+   POI wiring are in, and compare hangout/grocery candidate/validation counts against the
+   2026-09-19 numbers (945/108 candidates, 529/65 validated) — expect both CVR counts to hold
+   and OSM-sourced entries (`source_step == "osm_poi"`) to add previously-invisible
+   businesses like the Bisserup kro on top.
+3. M6 (findsmiley) — feeds off the same `resolve/jsonld.py` findsmiley-link extraction M7's
+   web-search path also uses.
+4. M8 (nightly orchestration) → M9 remainder (including the fish_shop/wine_shop/butcher table
    columns discovery now populates) → M10.

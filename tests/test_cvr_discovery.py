@@ -18,41 +18,101 @@ def _client(transport) -> CvrPermanentClient:
     return CvrPermanentClient(username="u", password="p", transport=transport)
 
 
-def _hit(cvr_number: int) -> dict:
-    return {"_source": {"Vrvirksomhed": {"cvrNummer": cvr_number}}}
+def _hit(cvr_number: int, vejnavn: str = "Vej", husnr: str = "1", postnr: int = 4000) -> dict:
+    return {
+        "_source": {
+            "Vrvirksomhed": {
+                "cvrNummer": cvr_number,
+                "virksomhedMetadata": {"nyesteBeliggenhedsadresse": {"vejnavn": vejnavn, "husnummerFra": husnr, "postnummer": postnr}},
+            }
+        }
+    }
 
 
-def test_query_shape_has_branch_should_postal_should_and_status_term():
-    captured = {}
+def _penhed_hit(p_number: int, vejnavn: str = "Vej", husnr: str = "1", postnr: int = 4000) -> dict:
+    return {
+        "_source": {
+            "VrproduktionsEnhed": {
+                "pNummer": p_number,
+                "produktionsEnhedMetadata": {"nyesteBeliggenhedsadresse": {"vejnavn": vejnavn, "husnummerFra": husnr, "postnummer": postnr}},
+            }
+        }
+    }
+
+
+def _empty_page(url, body, auth):
+    return TransportResponse(200, "{}", {"hits": {"total": 0, "hits": []}})
+
+
+def test_query_shape_has_branch_should_postal_should_and_status_term_for_both_indices():
+    captured = []
 
     def transport(url, body, auth):
-        captured["body"] = body
+        captured.append((url, body))
         return TransportResponse(200, "{}", {"hits": {"total": 0, "hits": []}})
 
     client = _client(transport)
     list(client.discover_active_businesses(branch_code_prefixes=["56", "47"], postal_ranges=[(4000, 4990)]))
 
-    must = captured["body"]["query"]["bool"]["must"]
-    branch_clause, postal_clause, status_clause = must
-    branch_prefixes = {c["prefix"]["Vrvirksomhed.virksomhedMetadata.nyesteHovedbranche.branchekode"] for c in branch_clause["bool"]["should"]}
-    assert branch_prefixes == {"56", "47"}
-    postal_range = postal_clause["bool"]["should"][0]["range"]["Vrvirksomhed.virksomhedMetadata.nyesteBeliggenhedsadresse.postnummer"]
-    assert postal_range == {"gte": 4000, "lte": 4990}
-    assert status_clause == {"term": {"Vrvirksomhed.virksomhedMetadata.sammensatStatus": "aktiv"}}
+    assert len(captured) == 2
+    (virksomhed_url, virksomhed_body), (penhed_url, penhed_body) = captured
+    assert "/virksomhed/_search" in virksomhed_url
+    assert "/produktionsenhed/_search" in penhed_url
+
+    for metadata_path, body in [
+        ("Vrvirksomhed.virksomhedMetadata", virksomhed_body),
+        ("VrproduktionsEnhed.produktionsEnhedMetadata", penhed_body),
+    ]:
+        branch_clause, postal_clause, status_clause = body["query"]["bool"]["must"]
+        branch_prefixes = {c["prefix"][f"{metadata_path}.nyesteHovedbranche.branchekode"] for c in branch_clause["bool"]["should"]}
+        assert branch_prefixes == {"56", "47"}
+        postal_range = postal_clause["bool"]["should"][0]["range"][f"{metadata_path}.nyesteBeliggenhedsadresse.postnummer"]
+        assert postal_range == {"gte": 4000, "lte": 4990}
+        assert status_clause == {"term": {f"{metadata_path}.sammensatStatus": "aktiv"}}
 
 
-def test_pages_through_all_results():
+def test_pages_through_all_virksomhed_results():
     pages = [
-        {"hits": {"total": 3, "hits": [_hit(1), _hit(2)]}},
-        {"hits": {"total": 3, "hits": [_hit(3)]}},
+        {"hits": {"total": 3, "hits": [_hit(1, "Vej A", "1"), _hit(2, "Vej B", "2")]}},
+        {"hits": {"total": 3, "hits": [_hit(3, "Vej C", "3")]}},
     ]
 
     def transport(url, body, auth):
+        if "produktionsenhed" in url:
+            return _empty_page(url, body, auth)
         return TransportResponse(200, "{}", pages[body["from"] // 200])
 
     client = _client(transport)
     result = list(client.discover_active_businesses(branch_code_prefixes=["56"], postal_ranges=[(4000, 4990)]))
     assert [r["cvrNummer"] for r in result] == [1, 2, 3]
+
+
+def test_merges_produktionsenhed_hits_normalized_to_virksomhed_shape():
+    def transport(url, body, auth):
+        if "produktionsenhed" in url:
+            return TransportResponse(200, "{}", {"hits": {"total": 1, "hits": [_penhed_hit(99, "Bisserup Byvej", "3", 4243)]}})
+        return _empty_page(url, body, auth)
+
+    client = _client(transport)
+    result = list(client.discover_active_businesses(branch_code_prefixes=["47"], postal_ranges=[(4243, 4243)]))
+    assert len(result) == 1
+    assert result[0]["pNummer"] == 99
+    # normalized so downstream resolve code sees virksomhedMetadata regardless of source index
+    assert result[0]["virksomhedMetadata"]["nyesteBeliggenhedsadresse"]["vejnavn"] == "Bisserup Byvej"
+
+
+def test_dedupes_same_physical_address_across_both_indices():
+    # a small single-location company's own P-unit is often registered at
+    # the identical address as its virksomhed entry -- querying both
+    # indices must not double-count it.
+    def transport(url, body, auth):
+        if "produktionsenhed" in url:
+            return TransportResponse(200, "{}", {"hits": {"total": 1, "hits": [_penhed_hit(99, "Havnevej", "1", 4243)]}})
+        return TransportResponse(200, "{}", {"hits": {"total": 1, "hits": [_hit(1, "Havnevej", "1", 4243)]}})
+
+    client = _client(transport)
+    result = list(client.discover_active_businesses(branch_code_prefixes=["56"], postal_ranges=[(4243, 4243)]))
+    assert len(result) == 1
 
 
 def test_blocked_status_raises_loudly():

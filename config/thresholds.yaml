@@ -82,3 +82,16 @@ cvr_branch_codes:
   fish_shop: ["472300"]                # Detailhandel med fisk, krebsdyr og bløddyr
   wine_shop: ["472500"]                # Detailhandel med drikkevarer (no wine-specific DB07 code exists)
   butcher: ["472200"]                  # Detailhandel med kød og kødprodukter
+
+# M7 web-search fallback (resolve/web_discovery.py) — only reached for a
+# town/category CVR discovery and OSM POI extraction both missed. "{town}"
+# is substituted at query time; the Danish noun matches what a business's
+# own site or a directory listing would actually say, not the CVR
+# branchetekst wording above.
+web_search_terms:
+  hangout: "restaurant café kro {town}"
+  grocery: "supermarked dagligvarebutik {town}"
+  fish_shop: "fiskehandler {town}"
+  wine_shop: "vinhandel {town}"
+  ice_cream: "isbutik {town}"
+  butcher: "slagter {town}"

@@ -17,6 +17,7 @@ from screener.db import Database
 from screener.fetch.bathing_water import build_badevand_lookup, load_badevand_sites
 from screener.fetch.boligsiden import BoligsidenClient, normalize_case
 from screener.fetch.cvr_discovery import CvrPermanentClient
+from screener.fetch.osm_poi import extract_business_pois
 from screener.geo.business_directory import build_business_directory
 from screener.geo.store import GeometryStore
 from screener.resolve.address_regex import DatafordelerAddressValidator
@@ -27,7 +28,7 @@ from screener.site.build import build_site
 logger = logging.getLogger(__name__)
 
 
-def _discover_business_directory(settings: Settings, db: Database) -> dict:
+def _discover_business_directory(settings: Settings, db: Database, osm_pbf_path: str) -> dict:
     cvr_client = CvrPermanentClient(db=db)
     validator = DatafordelerAddressValidator()
     businesses_by_category = {}
@@ -41,12 +42,22 @@ def _discover_business_directory(settings: Settings, db: Database) -> dict:
         resolved = resolve_discovered_businesses(hits, validator, category=category)
         logger.info("%s: %d candidates, %d validated", category, len(hits), len(resolved))
         businesses_by_category[category] = resolved
+
+    # M7 primary: OSM POIs -- already-placed real geometry, no address
+    # validation needed, and it covers businesses CVR structurally can't
+    # (e.g. run through a property-holding company registered elsewhere).
+    logger.info("extracting OSM business POIs from %s", osm_pbf_path)
+    osm_by_category = extract_business_pois(osm_pbf_path)
+    for category, osm_businesses in osm_by_category.items():
+        businesses_by_category.setdefault(category, []).extend(osm_businesses)
+
     return build_business_directory(businesses_by_category)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--osm-store", default=str(REPO_ROOT / "data" / "osm_store.pkl"))
+    parser.add_argument("--osm-pbf", default=str(REPO_ROOT / "data" / "denmark-latest.osm.pbf"))
     parser.add_argument("--badevand", default=str(REPO_ROOT / "data" / "badevand.geojson"))
     parser.add_argument("--out", default=str(REPO_ROOT / "data" / "site" / "index.html"))
     args = parser.parse_args()
@@ -77,7 +88,7 @@ def main() -> None:
     listings = [normalize_case(c) for c in raw_cases]
     logger.info("fetched %d real listings", len(listings))
 
-    business_directory = _discover_business_directory(settings, db)
+    business_directory = _discover_business_directory(settings, db, args.osm_pbf)
 
     scored = score_listings(listings, store, settings, badevand_lookup=badevand_lookup, business_directory=business_directory)
     scored = sort_scored_listings(scored)

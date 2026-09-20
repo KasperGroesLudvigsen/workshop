@@ -34,6 +34,19 @@ Query facts confirmed live:
     remap) — so this module only returns raw CVR data; coordinate
     resolution happens in ``resolve/cvr_discovery.py`` via the existing
     text-based ``DatafordelerAddressValidator``, unchanged.
+
+Found live 2026-09-19, chasing down a real business (a village grocery
+store) missing from discovery: this module originally only queried the
+``virksomhed`` (company) index. Chain/cooperative-affiliated stores
+register their legal entity wherever, but each **physical branch** is a
+separate ``produktionsenhed`` (P-unit) with its own real address and its
+own branch code -- ``virksomhed`` alone silently misses every such branch.
+``discover_active_businesses`` now queries both indices and merges them,
+deduping by physical address, since a small single-location business's own
+P-unit is often registered at the identical address as its ``virksomhed``
+entry. ``produktionsenhed``'s field paths differ (confirmed live via
+``_mapping``): ``VrproduktionsEnhed.produktionsEnhedMetadata.*``, not
+``virksomhedMetadata.*`` -- otherwise the same shape.
 """
 from __future__ import annotations
 
@@ -121,58 +134,98 @@ class CvrPermanentClient:
             raise RuntimeError(f"unexpected cvr-permanent response: status={resp.status_code} body={resp.text[:500]!r}")
         return resp.json_body
 
-    def discover_active_businesses(
-        self, *, branch_code_prefixes: list[str], postal_ranges: list[tuple[int, int]],
-    ) -> Iterator[dict[str, Any]]:
-        """Yield raw ``Vrvirksomhed`` records currently active (status
-        "aktiv"), whose latest main branch code starts with one of
-        ``branch_code_prefixes``, in one of ``postal_ranges``."""
-        query = {
-            "bool": {
-                "must": [
-                    {
-                        "bool": {
-                            "should": [
-                                {"prefix": {"Vrvirksomhed.virksomhedMetadata.nyesteHovedbranche.branchekode": p}}
-                                for p in branch_code_prefixes
-                            ],
-                            "minimum_should_match": 1,
-                        }
-                    },
-                    {
-                        "bool": {
-                            "should": [
-                                {
-                                    "range": {
-                                        "Vrvirksomhed.virksomhedMetadata.nyesteBeliggenhedsadresse.postnummer": {
-                                            "gte": zip_from, "lte": zip_to,
-                                        }
-                                    }
-                                }
-                                for zip_from, zip_to in postal_ranges
-                            ],
-                            "minimum_should_match": 1,
-                        }
-                    },
-                    {"term": {"Vrvirksomhed.virksomhedMetadata.sammensatStatus": "aktiv"}},
-                ]
-            }
-        }
-        first = self._search("virksomhed", {"query": query, "from": 0, "size": _PAGE_SIZE})
+    def _paginated_search(self, *, index: str, entity_key: str, query: dict[str, Any]) -> Iterator[dict[str, Any]]:
+        """Page through one index's results for ``query``, yielding each
+        hit's top-level entity dict, and raising if the number collected
+        doesn't match the declared total (silent truncation, not trusted)."""
+        first = self._search(index, {"query": query, "from": 0, "size": _PAGE_SIZE})
         total = int(first["hits"]["total"])
         if total > _MAX_RESULT_WINDOW:
             raise CvrPermanentResultWindowError(
-                f"query matched {total} businesses, over Elasticsearch's {_MAX_RESULT_WINDOW} "
+                f"query matched {total} {index} records, over Elasticsearch's {_MAX_RESULT_WINDOW} "
                 "result window — narrow branch_code_prefixes/postal_ranges"
             )
-        yield from (h["_source"]["Vrvirksomhed"] for h in first["hits"]["hits"])
+        yield from (h["_source"][entity_key] for h in first["hits"]["hits"])
         fetched = len(first["hits"]["hits"])
         offset = _PAGE_SIZE
         while fetched < total:
-            body = self._search("virksomhed", {"query": query, "from": offset, "size": _PAGE_SIZE})
+            body = self._search(index, {"query": query, "from": offset, "size": _PAGE_SIZE})
             hits = body["hits"]["hits"]
             if not hits:
                 break
-            yield from (h["_source"]["Vrvirksomhed"] for h in hits)
+            yield from (h["_source"][entity_key] for h in hits)
             fetched += len(hits)
             offset += _PAGE_SIZE
+
+    def discover_active_businesses(
+        self, *, branch_code_prefixes: list[str], postal_ranges: list[tuple[int, int]],
+    ) -> Iterator[dict[str, Any]]:
+        """Yield records (normalized to look like a ``Vrvirksomhed`` record
+        — see ``_normalize_produktionsenhed``) for currently-active
+        businesses (status "aktiv") whose latest main branch code starts
+        with one of ``branch_code_prefixes``, in one of ``postal_ranges`` —
+        merged across both the ``virksomhed`` and ``produktionsenhed``
+        indices, deduped by physical address."""
+        seen_addresses: set[tuple[str, str, int]] = set()
+
+        def dedupe(raws: Iterator[dict[str, Any]]) -> Iterator[dict[str, Any]]:
+            for raw in raws:
+                key = _address_key(raw)
+                if key is not None:
+                    if key in seen_addresses:
+                        continue
+                    seen_addresses.add(key)
+                yield raw
+
+        virksomhed_query = _build_query("Vrvirksomhed.virksomhedMetadata", branch_code_prefixes, postal_ranges)
+        yield from dedupe(
+            self._paginated_search(index="virksomhed", entity_key="Vrvirksomhed", query=virksomhed_query)
+        )
+
+        penhed_query = _build_query("VrproduktionsEnhed.produktionsEnhedMetadata", branch_code_prefixes, postal_ranges)
+        penhed_hits = self._paginated_search(
+            index="produktionsenhed", entity_key="VrproduktionsEnhed", query=penhed_query
+        )
+        yield from dedupe(_normalize_produktionsenhed(raw) for raw in penhed_hits)
+
+
+def _build_query(metadata_path: str, branch_code_prefixes: list[str], postal_ranges: list[tuple[int, int]]) -> dict[str, Any]:
+    return {
+        "bool": {
+            "must": [
+                {
+                    "bool": {
+                        "should": [{"prefix": {f"{metadata_path}.nyesteHovedbranche.branchekode": p}} for p in branch_code_prefixes],
+                        "minimum_should_match": 1,
+                    }
+                },
+                {
+                    "bool": {
+                        "should": [
+                            {"range": {f"{metadata_path}.nyesteBeliggenhedsadresse.postnummer": {"gte": zip_from, "lte": zip_to}}}
+                            for zip_from, zip_to in postal_ranges
+                        ],
+                        "minimum_should_match": 1,
+                    }
+                },
+                {"term": {f"{metadata_path}.sammensatStatus": "aktiv"}},
+            ]
+        }
+    }
+
+
+def _normalize_produktionsenhed(raw: dict[str, Any]) -> dict[str, Any]:
+    """A VrproduktionsEnhed record carries the exact same
+    name/branche/address/status shape a Vrvirksomhed record does, just
+    under ``produktionsEnhedMetadata`` instead of ``virksomhedMetadata``.
+    Re-keying it here means resolve/cvr_discovery.py never needs to know
+    which index a hit came from."""
+    return {**raw, "virksomhedMetadata": raw["produktionsEnhedMetadata"]}
+
+
+def _address_key(raw: dict[str, Any]) -> tuple[str, str, int] | None:
+    addr = raw.get("virksomhedMetadata", {}).get("nyesteBeliggenhedsadresse") or {}
+    vejnavn, husnr, postnr = addr.get("vejnavn"), addr.get("husnummerFra"), addr.get("postnummer")
+    if not (vejnavn and husnr and postnr):
+        return None  # never dedupe away a record missing address fields
+    return (str(vejnavn).strip().lower(), str(husnr).strip().lower(), postnr)

@@ -105,6 +105,22 @@ def test_datafordeler_validator_accepts_matching_gaeldende_address():
     assert round(result.lon, 3) == 11.518
 
 
+def test_datafordeler_validator_accepts_address_with_supplerende_bynavn():
+    # Found live 2026-09-19: a real address DAR renders with a hamlet name
+    # inserted before the postal code -- "Bisserup Byvej 3, Bisserup, 4243
+    # Rude" -- was silently failing the postal-code cross-check and getting
+    # dropped as "no match", even though DAR itself has it as Gaeldende.
+    session = _FakeDarSession(
+        husnummer_nodes=[
+            {"adgangsadressebetegnelse": "Bisserup Byvej 3, Bisserup, 4243 Rude", "status": "3", "adgangspunkt": "id-1"}
+        ],
+        adressepunkt_nodes=[{"position": {"wkt": _KNOWN_POINT_WKT}}],
+    )
+    validator = DatafordelerAddressValidator(api_key="test-key", session=session)
+    result = validator.validate(AddressCandidate("Bisserup Byvej 3", "4243", "Rude", "raw"))
+    assert result is not None
+
+
 def test_datafordeler_validator_rejects_non_gaeldende_status():
     # status "2" is Foreloebig (preliminary), not yet Gaeldende -- must not be trusted.
     session = _FakeDarSession(

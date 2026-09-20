@@ -1,13 +1,13 @@
 # Summer House Location Screener — Build Plan
 
 > Status as of the last update: **M0–M5 done**, plus real hangout/grocery
-> business discovery (2026-09-16, via Erhvervsstyrelsen's `cvr-permanent` --
-> a chunk of M6/M7's actual value without needing OSM-POI extraction or
-> Brave web-search). M6–M10 remainder not started. As of 2026-09-15, all 5
-> real-data verification gaps below are closed, and the listings source was
-> switched from Boliga to Boligsiden after Boliga's Cloudflare protection
-> proved unreliable for a real run. See `docs/HANDOFF.md` for the detailed
-> status report.
+> business discovery (2026-09-16, via Erhvervsstyrelsen's `cvr-permanent`),
+> plus **M7 mostly done** (2026-09-19, OSM POI discovery + Tavily web-search
+> fallback — not Brave, which lost its free tier). M6, M8-M10 not started.
+> As of 2026-09-15, all 5 real-data verification gaps below are closed, and
+> the listings source was switched from Boliga to Boligsiden after Boliga's
+> Cloudflare protection proved unreliable for a real run. See `docs/HANDOFF.md`
+> for the detailed status report.
 
 ## Context
 
@@ -39,7 +39,8 @@ gap-fill. The listings source itself started as Boliga (M1) and was replaced wit
     cvr_discovery.py       # cvr-permanent bulk enumeration by branch code + postal code (additive to cvr.py)
     bathing_water.py       # Miljøstyrelsen/EEA badevand dataset pull + spatial lake matching
     findsmiley.py          # NOT STARTED — per-business inspection report fetch (M6)
-    web_search.py          # NOT STARTED — Brave search, per-town discovery (M7)
+    osm_poi.py             # M7 primary: named OSM POI tags -> ResolvedBusiness, no address gate needed
+    web_search.py          # M7 fallback: TavilyClient, per-town/category search (not Brave -- lost its free tier)
   /resolve                 # business name -> validated address pipeline (fixed, non-agentic)
     cvr_match.py           # step 1: fuzzy name match incl. binavne/trading names
     cvr_discovery.py       # bulk counterpart to cvr_match.py: raw cvr-permanent hits -> validated businesses
@@ -47,6 +48,7 @@ gap-fill. The listings source itself started as Boliga (M1) and was replaced wit
     address_regex.py       # step 3: candidate extraction + address-register validation
     llm_extract.py         # step 4: last-resort structured extraction (Anthropic API)
     pipeline.py            # orchestrates 1->4, stopping at first validated hit; loud discard on total failure
+    web_discovery.py       # M7 fallback: same jsonld->regex->llm cascade, applied to a web-search result's page
   /geo
     distance.py            # distance_fn(a, b) -> km; straight-line now, swappable for drive-time later
     projection.py          # WGS84 <-> EPSG:25832 (Denmark UTM) conversion
@@ -149,22 +151,43 @@ itself still can't do bulk discovery (it's a lookup API, not an enumeration API)
 **2026-09-16, `fetch/cvr_discovery.py` + `resolve/cvr_discovery.py` added real bulk discovery
 via Erhvervsstyrelsen's `cvr-permanent` system-til-system access** (branch code + postal code
 enumeration), wired into `jobs/run_real.py`. Hangout/grocery are now real hard filters end to
-end for CVR-registered businesses — OSM POIs / M7's web-search gap-fill are only still needed
-for businesses *not* registered in CVR at all. `resolve/pipeline.py` implements all 4 steps
+end for CVR-registered businesses — M7 (below) covers businesses *not* registered in CVR at
+all, or structurally invisible to it. `resolve/pipeline.py` implements all 4 steps
 with the address-register validation gate; `AddressValidator`'s real implementation,
 `DatafordelerAddressValidator`, is confirmed live against DAR's GraphQL v3 endpoint (see
 `docs/HANDOFF.md`) — reused unchanged by both the name-lookup and bulk-discovery paths, now
 rate-limited (5 req/sec default) since bulk discovery gives it far higher call volume than
 before. `score/pipeline.py` enforces hangout/grocery as real hard filters once a business
-directory is supplied — verified live for one postal code (see `docs/HANDOFF.md`); a
-full-region run with discovery wired in hasn't been attempted yet.
+directory is supplied — run at full-region scale 2026-09-19 (2,407 listings, 1,311 passing).
+**Same day**, spot-checking real Bisserup businesses found two more real bugs: a postal-code
+parser that broke on any DAR address with a "supplerende bynavn" (village-within-a-postal-town
+name), affecting every address validation in the project, not just discovery; and
+`fetch/cvr_discovery.py` only querying the `virksomhed` CVR index, missing chain/cooperative
+stores registered as `produktionsenhed` (physical branch) records. Both fixed and verified
+live — see `docs/HANDOFF.md` item 7 for the full detail, including a genuine structural blind
+spot found the same day: a business run through a property-holding company registered in a
+different town under a non-hospitality branch code, which no CVR fix can close (this is
+exactly what motivated M7 below).
 
 **M6 — findsmiley.** ⬜ Not started. Attach inspection date + address cross-check as a
 freshness/secondary signal on food businesses already resolved in M5.
 
-**M7 — Web-search gap-fill.** ⬜ Not started. Needs a Brave Search API key. Search per town
-for hangouts/groceries CVR/OSM missed; feed discovered names through the same M5 resolution
-pipeline (never skip the address-register gate for search-discovered names).
+**M7 — Business discovery beyond CVR.** 🟡 Mostly done, 2026-09-19. Primary mechanism is
+**OSM POI extraction** (`fetch/osm_poi.py`), not web search — named OSM nodes/ways tagged
+with the categories this project scores against, wrapped straight into `ResolvedBusiness`
+with no address-validation gate (already-placed real geometry, not raw text). Confirmed live
+against the public Overpass API before writing the module: it found both `Bisserup Strand
+Kro` and `Bisserup Is og Grillhus` (the two businesses M5's CVR-only discovery structurally
+can't see — see M5 above) by their real names with exact coordinates, plus businesses we
+didn't even know to look for. Unit-tested (6 tests, synthetic fixture), wired into
+`jobs/run_real.py`, and **confirmed against the real local `data/denmark-latest.osm.pbf`**
+(both Bisserup test cases found, coordinates matching live Overpass). Secondary fallback is
+**Tavily web search** (`fetch/web_search.py`,
+`resolve/web_discovery.py`) for whatever OSM doesn't have tagged — not Brave, which lost its
+free tier Feb 2026; Tavily is free, no card, 1,000 credits/month. Every candidate this
+produces goes through the same JSON-LD → regex → LLM cascade and `AddressValidator` gate as
+M5's resolution pipeline. Unit-tested (10 tests, fakes); **not yet exercised against the real
+API** — needs `TAVILY_API_KEY` in `.env`. See `docs/HANDOFF.md` item 8.
 
 **M8 — Nightly orchestration.** ⬜ Not started. `jobs/nightly.py` = fetch → score → diff
 against yesterday's scored table (`db.py` already has `passing_listing_ids`/

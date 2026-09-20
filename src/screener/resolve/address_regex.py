@@ -109,8 +109,18 @@ def _parse_postal_from_betegnelse(betegnelse: str) -> str | None:
     """"Havnevej 1, 4243 Rude" -> "4243". DAR's postnummer field on
     DAR_Husnummer is an opaque reference id, not the 4-digit code, so the
     only place the plain code is available for a cross-check is this
-    human-readable string DAR itself renders."""
-    _, _, tail = betegnelse.partition(", ")
+    human-readable string DAR itself renders.
+
+    Bug found live 2026-09-19: an address with a "supplerende bynavn" (a
+    hamlet/village name DAR inserts between the street and the postal
+    code -- common for small places within a larger postal town, e.g.
+    "Bisserup Byvej 3, Bisserup, 4243 Rude") has *two* commas, not one.
+    Taking the first comma-separated segment silently mis-parsed the
+    bynavn itself ("Bisserup,") as the postal code, failed `isdigit()`,
+    and dropped an otherwise perfectly valid, Gaeldende address. The
+    postal code always immediately precedes the town in the *last*
+    segment, regardless of how many bynavn segments precede it."""
+    tail = betegnelse.rsplit(", ", 1)[-1]
     postal, _, _ = tail.strip().partition(" ")
     return postal if postal.isdigit() and len(postal) == 4 else None
 

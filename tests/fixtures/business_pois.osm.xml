@@ -1,0 +1,46 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<osm version="0.6" generator="synthetic-fixture">
+  <!-- Real Bisserup coordinates, confirmed live via Overpass 2026-09-19 -->
+  <node id="101" lat="55.199623" lon="11.493275" version="1">
+    <tag k="amenity" v="restaurant"/>
+    <tag k="name" v="Bisserup Strand Kro"/>
+  </node>
+  <node id="102" lat="55.199526" lon="11.494104" version="1">
+    <tag k="amenity" v="fast_food"/>
+    <tag k="name" v="Bisserup Is og Grillhus"/>
+  </node>
+  <node id="103" lat="55.207356" lon="11.495382" version="1">
+    <tag k="shop" v="supermarket"/>
+    <tag k="name" v="Dagli'Brugsen"/>
+  </node>
+  <node id="104" lat="55.201169" lon="11.496797" version="1">
+    <tag k="shop" v="kiosk"/>
+    <tag k="name" v="Bisserup Camping Kiosken"/>
+  </node>
+
+  <!-- A way (polygon) supermarket, to exercise the centroid path -->
+  <node id="201" lat="55.210000" lon="11.500000" version="1"/>
+  <node id="202" lat="55.210000" lon="11.500400" version="1"/>
+  <node id="203" lat="55.210300" lon="11.500400" version="1"/>
+  <node id="204" lat="55.210300" lon="11.500000" version="1"/>
+  <way id="301" version="1">
+    <nd ref="201"/>
+    <nd ref="202"/>
+    <nd ref="203"/>
+    <nd ref="204"/>
+    <nd ref="201"/>
+    <tag k="shop" v="convenience"/>
+    <tag k="name" v="Way Shop"/>
+  </way>
+
+  <!-- Unnamed node with a matching tag: must be skipped, not crash -->
+  <node id="401" lat="55.2" lon="11.5" version="1">
+    <tag k="amenity" v="cafe"/>
+  </node>
+
+  <!-- Named node with an irrelevant tag: must be ignored -->
+  <node id="402" lat="55.2" lon="11.5" version="1">
+    <tag k="amenity" v="parking"/>
+    <tag k="name" v="Irrelevant Parking"/>
+  </node>
+</osm>
