@@ -22,6 +22,7 @@ from screener.fetch.bathing_water import build_badevand_lookup, load_badevand_si
 from screener.fetch.boligsiden import BoligsidenClient, normalize_case
 from screener.fetch.cvr_discovery import CvrPermanentClient
 from screener.fetch.discovery_cache import load_or_build
+from screener.fetch.listing_photo import fetch_listing_photo_url
 from screener.fetch.osm_poi import extract_business_pois
 from screener.fetch.page_fetch import fetch_html_page
 from screener.fetch.web_search import TavilyClient
@@ -142,6 +143,15 @@ def main() -> None:
     )
     listings = [normalize_case(c) for c in raw_cases]
     logger.info("fetched %d real listings", len(listings))
+
+    for listing in listings:
+        listing["photo_url"] = fetch_listing_photo_url(
+            listing["url"], user_agent=settings.boligsiden.user_agent, db=db
+        )
+    logger.info(
+        "fetched preview photos for %d of %d listings",
+        sum(1 for l in listings if l["photo_url"]), len(listings),
+    )
 
     business_directory = _discover_business_directory(
         settings, db, args.osm_pbf, listings,

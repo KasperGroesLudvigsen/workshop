@@ -17,7 +17,15 @@ from screener.resolve.pipeline import ResolvedBusiness
 def build_business_layer(businesses: list[ResolvedBusiness]) -> Layer:
     geoms = [Point(*point_to_xy(b.lon, b.lat)) for b in businesses]
     records = [
-        {"name": b.name, "source_step": b.source_step, "postal_code": b.postal_code}
+        {
+            "name": b.name,
+            "source_step": b.source_step,
+            "postal_code": b.postal_code,
+            "street": b.street,
+            "town": b.town,
+            "lat": b.lat,
+            "lon": b.lon,
+        }
         for b in businesses
     ]
     return Layer(geoms=geoms, records=records)

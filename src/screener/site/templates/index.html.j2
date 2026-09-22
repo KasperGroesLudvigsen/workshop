@@ -40,6 +40,13 @@
   button.action-btn.active { background: #fff2c2; border-color: #e0b400; }
   tr.row-liked { background: #fffbea; }
   tr.row-hidden { opacity: 0.5; }
+  .popup-photo { width: 100%; max-height: 140px; object-fit: cover; border-radius: 4px; display: block; margin-bottom: 6px; }
+  .popup-title { font-size: 14px; font-weight: 700; }
+  .popup-price { font-size: 14px; font-weight: 700; color: #14343b; margin-top: 2px; }
+  .popup-meta { color: #666; font-size: 11px; margin-top: 2px; }
+  .popup-section { margin-top: 5px; }
+  .popup-label { font-weight: 600; color: #333; }
+  .popup-links { margin-top: 6px; padding-top: 6px; border-top: 1px solid #eee; }
 </style>
 </head>
 <body>
@@ -421,22 +428,49 @@ function namesList(cat, radiusKm) {
   return shown + more;
 }
 
+// A Maps text search for the business's name, anchored by its resolved
+// street+town when we have one (CVR/web-discovered businesses) or its
+// coordinates otherwise (OSM POIs have no address, only lat/lon).
+function mapsSearchUrl(name, street, town, lat, lon) {
+  const query = (street && town) ? `${name}, ${street}, ${town}` :
+                (lat != null && lon != null) ? `${name} @${lat},${lon}` : name;
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+}
+
+function hangoutLinksHtml(cat, radiusKm) {
+  if (!cat) return '<em>not yet available</em>';
+  const within = cat.candidates.filter(c => c.distance_km <= radiusKm);
+  if (within.length === 0) return '<em>none within radius</em>';
+  const shown = within.slice(0, 3)
+    .map(c => `<a href="${mapsSearchUrl(c.name, c.street, c.town, c.lat, c.lon)}" target="_blank" rel="noopener">${c.name}</a> (${fmt(c.distance_km)} km)`)
+    .join(', ');
+  const more = within.length > 3 ? ` <em>+${within.length - 3} more</em>` : '';
+  return shown + more;
+}
+
 function popupHtml(row) {
   const l = row.listing;
   const cfg = currentConfig();
+  const cityLine = [l.zip_code, l.town].filter(Boolean).join(' ');
+  const photo = l.photo_url
+    ? `<a href="${l.listing_url ?? '#'}" target="_blank" rel="noopener"><img class="popup-photo" src="${l.photo_url}" loading="lazy"></a>`
+    : '';
   return `
     <div style="font-size:12px; max-width: 260px;">
-      <strong>${l.address ?? l.listing_id}</strong><br>
-      Open water: ${fmt(row.openWater)} km (sea ${fmt(l.water.sea_distance_km)} km,
-        lake ${row.lakeCandidate ? fmt(row.lakeCandidate.distance_km) + ' km, ' + row.lakeCandidate.eligibility_reason : 'n/a'})<br>
-      Hangouts (${cfg.hangoutKm} km): ${namesList(l.hangout, cfg.hangoutKm)}<br>
-      Grocery (${cfg.groceryKm} km): ${namesList(l.grocery, cfg.groceryKm)}<br>
-      Marina: ${namesList(l.marina, 15)}<br>
-      Playground: ${namesList(l.playground, 15)}<br>
-      Pool: ${namesList(l.pool, 15)}<br>
-      Beach: ${namesList(l.beach, 15)}<br>
-      ${actionButtonsHtml(row)}<br>
-      ${linksHtml(l)}
+      ${photo}
+      <div class="popup-title">${l.address ?? l.listing_id}${cityLine ? ', ' + cityLine : ''}</div>
+      <div class="popup-price">${fmtPrice(l.price)}</div>
+      <div class="popup-meta">${l.size_m2 ?? '—'} m² &middot; ${l.rooms ?? '—'} rooms${l.build_year ? ' &middot; built ' + l.build_year : ''}</div>
+      <div class="popup-section"><span class="popup-label">Open water:</span> ${fmt(row.openWater)} km (sea ${fmt(l.water.sea_distance_km)} km,
+        lake ${row.lakeCandidate ? fmt(row.lakeCandidate.distance_km) + ' km, ' + row.lakeCandidate.eligibility_reason : 'n/a'})</div>
+      <div class="popup-section"><span class="popup-label">Hangouts (${cfg.hangoutKm} km):</span> ${hangoutLinksHtml(l.hangout, cfg.hangoutKm)}</div>
+      <div class="popup-section"><span class="popup-label">Grocery (${cfg.groceryKm} km):</span> ${namesList(l.grocery, cfg.groceryKm)}</div>
+      <div class="popup-section"><span class="popup-label">Marina:</span> ${namesList(l.marina, 15)}</div>
+      <div class="popup-section"><span class="popup-label">Playground:</span> ${namesList(l.playground, 15)}</div>
+      <div class="popup-section"><span class="popup-label">Pool:</span> ${namesList(l.pool, 15)}</div>
+      <div class="popup-section"><span class="popup-label">Beach:</span> ${namesList(l.beach, 15)}</div>
+      <div class="popup-section">${actionButtonsHtml(row)}</div>
+      <div class="popup-links">${linksHtml(l)}</div>
     </div>
   `;
 }
@@ -457,7 +491,7 @@ function linksHtml(l) {
     <a class="ext-link" href="${l.map_links.google_pin}" target="_blank" rel="noopener">Pin</a>
     <a class="ext-link" href="${l.map_links.google_aerial}" target="_blank" rel="noopener">Aerial</a>
     <a class="ext-link" href="${l.map_links.google_street}" target="_blank" rel="noopener">Street</a>
-    <a class="ext-link" href="${l.map_links.apple}" target="_blank" rel="noopener">Apple</a>
+    ${l.map_links.boligsiden_address ? `<a class="ext-link" href="${l.map_links.boligsiden_address}" target="_blank" rel="noopener">Boligsiden</a>` : ''}
   `;
 }
 

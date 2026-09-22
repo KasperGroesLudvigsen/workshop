@@ -77,6 +77,11 @@ def score_listing(
         name for name in HARD_FILTER_CVR_CATEGORIES if name in business_directory
     ]
 
+    street = listing.get("address")
+    zip_code = listing.get("zip_code")
+    town = listing.get("town")
+    full_address = f"{street}, {zip_code} {town}" if street and zip_code and town else street
+
     return {
         "listing_id": listing["id"],
         "lat": lat,
@@ -88,9 +93,11 @@ def score_listing(
         "build_year": listing.get("build_year"),
         "energy_class": listing.get("energy_class"),
         "days_on_market": listing.get("days_on_market"),
-        "address": listing.get("address"),
-        "zip_code": listing.get("zip_code"),
+        "address": street,
+        "zip_code": zip_code,
+        "town": town,
         "listing_url": listing.get("url"),
+        "photo_url": listing.get("photo_url"),
         "water": {
             "sea_distance_km": water.sea_distance_km,
             "nearest_lake_any": asdict(water.nearest_lake_any) if water.nearest_lake_any else None,
@@ -104,7 +111,9 @@ def score_listing(
         **cvr_categories,
         "passed": passed,
         "hard_filters_applied": hard_filters_applied,
-        "map_links": build_map_links(lat, lon, address=listing.get("address")),
+        "map_links": build_map_links(
+            lat, lon, address=full_address, boligsiden_slug=listing.get("boligsiden_address_slug")
+        ),
     }
 
 

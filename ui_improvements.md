@@ -1,6 +1,6 @@
 # Improvements to implement
 
-## UI improvements
+## 1 UI improvements
 
 ### Regarding the listing pop up box
 This is about the box that appears when a listing on the map is clicked. 
@@ -14,7 +14,7 @@ Feedback to improve upon:
 - replace apple maps link with link to the listing in Boligsiden so I can easily open it and save it in Boligsiden. 
 - For each of the top 3 hangouts, add a link to their Google Maps entry. Example: For Fjordkroen 4733 Bækkeskov, this is what I wanna see: https://www.google.com/maps/place/Fjordkroen/@55.1677376,12.0277561,947m/data=!3m1!1e3!4m12!1m5!3m4!2zNTXCsDEwJzI5LjMiTiAxMsKwMDMnMTQuMiJF!8m2!3d55.17481!4d12.053944!3m5!1s0x4652c30039bcffc1:0xffb266d7f136a742!8m2!3d55.1682189!4d12.0328917!16s%2Fg%2F11y3nf51l0?entry=ttu&g_ep=EgoyMDI2MDkxNi4wIKXMDSoASAFQAw%3D%3D 
 
-## Other improvements
+## 2 Other improvements
 Analyze these errors and how to fix them. 
 
 - According to the data, the listing Svinøvestervej 11, 4750 Lundby is 0.35 km from Cafe JaTak APS, but JaTak is actually in Vandværksvej 32 in Gelsted - far from Svinøvestervej. 

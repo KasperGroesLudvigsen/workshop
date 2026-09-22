@@ -31,7 +31,10 @@ def _case(case_id: str, zip_code: int) -> dict:
         "numberOfRooms": 3,
         "yearBuilt": 1975,
         "daysOnMarket": 10,
-        "address": {"roadName": "Havnevej", "houseNumber": "1", "zipCode": zip_code, "cityName": "Rude"},
+        "address": {
+            "roadName": "Havnevej", "houseNumber": "1", "zipCode": zip_code, "cityName": "Rude",
+            "slug": "havnevej-1-4243-rude-03301137__1_______",
+        },
     }
 
 
@@ -101,3 +104,4 @@ def test_normalize_case_maps_confirmed_fields():
     assert listing["zip_code"] == 4243
     assert listing["town"] == "Rude"
     assert listing["url"] == "https://boligsiden.dk/viderestilling/abc-123"
+    assert listing["boligsiden_address_slug"] == "havnevej-1-4243-rude-03301137__1_______"

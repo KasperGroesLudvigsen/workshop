@@ -47,7 +47,7 @@ def test_osm_backed_categories_present_and_cvr_categories_pending():
         assert rec[category] is None
 
 
-def test_map_links_use_percent_encoded_comma():
+def test_map_links_use_percent_encoded_comma_when_no_address():
     store = build_geometry_store(FIXTURE)
     listings = [{"id": "4", "lat": 55.43, "lon": 11.55}]
     scored = score_listings(listings, store, _settings())
@@ -55,7 +55,21 @@ def test_map_links_use_percent_encoded_comma():
     assert links["google_pin"] == "https://www.google.com/maps/search/?api=1&query=55.43%2C11.55"
     assert "map_action=map" in links["google_aerial"] and "basemap=satellite" in links["google_aerial"]
     assert "map_action=pano" in links["google_street"]
-    assert links["apple"].startswith("https://maps.apple.com/?ll=55.43%2C11.55")
+    assert links["boligsiden_address"] is None
+
+
+def test_map_links_pin_uses_address_when_available():
+    store = build_geometry_store(FIXTURE)
+    listings = [{
+        "id": "5", "lat": 55.43, "lon": 11.55,
+        "address": "Havnevej 1", "zip_code": 4243, "town": "Rude",
+        "boligsiden_address_slug": "havnevej-1-4243-rude-03301137__1_______",
+    }]
+    scored = score_listings(listings, store, _settings())
+    links = scored[0]["map_links"]
+    assert links["google_pin"] == "https://www.google.com/maps/search/?api=1&query=Havnevej%201%2C%204243%20Rude"
+    assert links["boligsiden_address"] == "https://www.boligsiden.dk/adresse/havnevej-1-4243-rude-03301137__1_______"
+    assert scored[0]["town"] == "Rude"
 
 
 def test_business_directory_wires_hangout_as_real_hard_filter():
@@ -75,7 +89,11 @@ def test_business_directory_wires_hangout_as_real_hard_filter():
     by_id = {r["listing_id"]: r for r in scored}
 
     assert by_id["near-hangout"]["hangout"]["nearest_km"] < 0.01
-    assert by_id["near-hangout"]["hangout"]["candidates"][0]["name"] == "Bisserup Havnekro"
+    candidate = by_id["near-hangout"]["hangout"]["candidates"][0]
+    assert candidate["name"] == "Bisserup Havnekro"
+    assert candidate["street"] == "Havnevej 1"
+    assert candidate["town"] == "Rude"
+    assert candidate["lat"] == 55.429518 and candidate["lon"] == 11.551550
     assert by_id["near-hangout"]["passed"] is True
     assert "hangout" in by_id["near-hangout"]["hard_filters_applied"]
 

@@ -23,7 +23,14 @@ def category_summary(layer: Layer, point: Point, search_radius_m: float) -> dict
     return {
         "nearest_km": (nearest[1] / 1000.0) if nearest else None,
         "candidates": [
-            {"name": record.get("name") or "(unnamed)", "distance_km": dist / 1000.0}
+            {
+                "name": record.get("name") or "(unnamed)",
+                "distance_km": dist / 1000.0,
+                "street": record.get("street") or None,
+                "town": record.get("town") or None,
+                "lat": record.get("lat"),
+                "lon": record.get("lon"),
+            }
             for record, dist, _geom in within
         ],
     }
