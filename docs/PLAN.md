@@ -1,9 +1,8 @@
 # Summer House Location Screener — Build Plan
 
-> Status as of the last update: **M0–M5 done**, plus real hangout/grocery
-> business discovery (2026-09-16, via Erhvervsstyrelsen's `cvr-permanent`),
-> plus **M7 mostly done** (2026-09-19, OSM POI discovery + Tavily web-search
-> fallback — not Brave, which lost its free tier). M6, M8-M10 not started.
+> Status as of the last update: **M0–M5 and M7 done** (2026-09-20; M7's OSM POI discovery +
+> Tavily web-search fallback — not Brave, which lost its free tier — plus real hangout/grocery
+> business discovery via Erhvervsstyrelsen's `cvr-permanent`, 2026-09-16). M6, M8-M10 not started.
 > As of 2026-09-15, all 5 real-data verification gaps below are closed, and
 > the listings source was switched from Boliga to Boligsiden after Boliga's
 > Cloudflare protection proved unreliable for a real run. See `docs/HANDOFF.md`
@@ -40,7 +39,9 @@ gap-fill. The listings source itself started as Boliga (M1) and was replaced wit
     bathing_water.py       # Miljøstyrelsen/EEA badevand dataset pull + spatial lake matching
     findsmiley.py          # NOT STARTED — per-business inspection report fetch (M6)
     osm_poi.py             # M7 primary: named OSM POI tags -> ResolvedBusiness, no address gate needed
-    web_search.py          # M7 fallback: TavilyClient, per-town/category search (not Brave -- lost its free tier)
+    web_search.py          # M7 fallback: TavilyClient, per-town/category search (not Brave -- lost its free tier);
+                           # read-through cache + monthly budget enforcement live in here too
+    page_fetch.py          # M7: real PageFetcher impl (plain requests.get, never raises)
   /resolve                 # business name -> validated address pipeline (fixed, non-agentic)
     cvr_match.py           # step 1: fuzzy name match incl. binavne/trading names
     cvr_discovery.py       # bulk counterpart to cvr_match.py: raw cvr-permanent hits -> validated businesses
@@ -49,6 +50,7 @@ gap-fill. The listings source itself started as Boliga (M1) and was replaced wit
     llm_extract.py         # step 4: last-resort structured extraction (Anthropic API)
     pipeline.py            # orchestrates 1->4, stopping at first validated hit; loud discard on total failure
     web_discovery.py       # M7 fallback: same jsonld->regex->llm cascade, applied to a web-search result's page
+    web_discovery_gaps.py  # M7: decides which (town, category) pairs need a web search, budget-aware orchestration
   /geo
     distance.py            # distance_fn(a, b) -> km; straight-line now, swappable for drive-time later
     projection.py          # WGS84 <-> EPSG:25832 (Denmark UTM) conversion
@@ -72,7 +74,7 @@ gap-fill. The listings source itself started as Boliga (M1) and was replaced wit
   static_prep.py           # NOT STARTED — monthly/on-demand: OSM index, CVR pull+resolve, bathing-water pull (M8-ish)
   nightly.py               # NOT STARTED — fetch -> score -> diff -> notify (M8)
 /deploy                    # NOT STARTED — systemd units + Hetzner runbook (M10)
-/tests                     # 62 tests, all passing
+/tests                     # 95 tests, all passing
 ```
 
 ## Key design decisions (carried from the brief, made concrete)
@@ -109,6 +111,13 @@ gap-fill. The listings source itself started as Boliga (M1) and was replaced wit
   truncation. No postal-range sharding needed: Boligsiden has no small per-query cap the way
   Boliga did, so the client just pages through the whole country and filters by zip code
   client-side.
+- **Region-wide discovery is cached, not re-run per listing refresh**: CVR discovery and OSM
+  POI extraction (2026-09-21) don't depend on which listings exist, only on the region — so
+  `fetch/discovery_cache.py`'s `load_or_build` caches both to disk (`data/cvr_business_cache.pkl`,
+  `data/osm_poi_cache.pkl`) and only rebuilds when actually stale (CVR: a configurable max-age,
+  default 7 days; OSM POI: only when the source PBF file itself is newer than the cache) —
+  mirrors the save/load pattern `geo/store.py`'s `GeometryStore` already uses for the sibling
+  OSM geometry pass. `jobs/run_real.py --rebuild-discovery-cache` forces both regardless.
 
 ## Build sequence (vertical slices)
 
@@ -172,7 +181,7 @@ exactly what motivated M7 below).
 **M6 — findsmiley.** ⬜ Not started. Attach inspection date + address cross-check as a
 freshness/secondary signal on food businesses already resolved in M5.
 
-**M7 — Business discovery beyond CVR.** 🟡 Mostly done, 2026-09-19. Primary mechanism is
+**M7 — Business discovery beyond CVR.** ✅ Done, 2026-09-19/20. Primary mechanism is
 **OSM POI extraction** (`fetch/osm_poi.py`), not web search — named OSM nodes/ways tagged
 with the categories this project scores against, wrapped straight into `ResolvedBusiness`
 with no address-validation gate (already-placed real geometry, not raw text). Confirmed live
@@ -182,12 +191,24 @@ can't see — see M5 above) by their real names with exact coordinates, plus bus
 didn't even know to look for. Unit-tested (6 tests, synthetic fixture), wired into
 `jobs/run_real.py`, and **confirmed against the real local `data/denmark-latest.osm.pbf`**
 (both Bisserup test cases found, coordinates matching live Overpass). Secondary fallback is
-**Tavily web search** (`fetch/web_search.py`,
-`resolve/web_discovery.py`) for whatever OSM doesn't have tagged — not Brave, which lost its
-free tier Feb 2026; Tavily is free, no card, 1,000 credits/month. Every candidate this
-produces goes through the same JSON-LD → regex → LLM cascade and `AddressValidator` gate as
-M5's resolution pipeline. Unit-tested (10 tests, fakes); **not yet exercised against the real
-API** — needs `TAVILY_API_KEY` in `.env`. See `docs/HANDOFF.md` item 8.
+**Tavily web search** (`fetch/web_search.py`, `resolve/web_discovery.py`,
+`resolve/web_discovery_gaps.py`) for whatever OSM doesn't have tagged — not Brave, which lost
+its free tier Feb 2026; Tavily is free, no card, 1,000 credits/month. `web_discovery_gaps.py`
+decides *which* (town, category) pairs actually need a search (reusing the same
+nearest-distance machinery scoring uses), prioritizing the hard-filter categories; every
+candidate found goes through the same JSON-LD → regex → LLM cascade and `AddressValidator`
+gate as M5's resolution pipeline. A real read-through cache (`db.py`'s `raw_responses`, now
+actually read, not just written) plus a hard monthly credit budget and a per-run pacing cap
+(`config/thresholds.yaml`) keep repeat runs from re-spending credits and keep a single cold-cache
+run from exhausting the free tier. **Confirmed live end to end 2026-09-20** against real
+postal 4243 (Bisserup): real Tavily calls succeeded, a "Danmark" query-disambiguation fix
+(town names collide with English words and are the coarser postal town, not the actual
+hamlet) made results genuinely relevant, an identical re-run made zero new real calls
+(cache confirmed working), and a real `llm_extract.py` crash (missing optional `anthropic`
+package) was found and fixed to degrade gracefully instead. Residual, deliberately-unfixed
+finding: most real business/review pages block a plain HTTP fetch (403) — lower yield for
+this specific fallback, not a crash risk; not pursuing browser-impersonation to get past it.
+See `docs/HANDOFF.md` items 8-9.
 
 **M8 — Nightly orchestration.** ⬜ Not started. `jobs/nightly.py` = fetch → score → diff
 against yesterday's scored table (`db.py` already has `passing_listing_ids`/

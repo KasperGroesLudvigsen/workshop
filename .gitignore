@@ -6,6 +6,8 @@ __pycache__/
 data/*.duckdb
 data/*.pbf
 data/osm_store.pkl
+data/osm_poi_cache.pkl
+data/cvr_business_cache.pkl
 data/*.geojson
 data/site/
 *.egg-info/

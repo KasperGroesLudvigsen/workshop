@@ -95,3 +95,19 @@ web_search_terms:
   wine_shop: "vinhandel {town}"
   ice_cream: "isbutik {town}"
   butcher: "slagter {town}"
+
+# Tavily's free tier is 1,000 credits/month. web_search_monthly_budget is a
+# hard ceiling enforced inside fetch/web_search.py's TavilyClient (checked
+# before every non-cached call, tracked via db.py's raw_responses rows for
+# this calendar month) -- kept below 1,000 for headroom. A cache hit (the
+# common case on any re-run -- see db.py's read-through cache) never counts
+# against this. web_search_max_calls_per_run additionally paces any single
+# run so a large cold-cache run can't spend the whole month's budget alone.
+web_search_monthly_budget: 900
+web_search_max_calls_per_run: 150
+
+# CVR bulk discovery + DAR validation is region-wide and listing-independent
+# -- it doesn't need re-running every time jobs/run_real.py picks up new
+# listings (a few times a week). Cached to data/cvr_business_cache.pkl,
+# rebuilt automatically once it's older than this many days.
+cvr_cache_max_age_days: 7

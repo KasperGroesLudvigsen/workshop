@@ -27,7 +27,7 @@ def _client_with_results(results: list[WebSearchResult]) -> TavilyClient:
 
 
 def test_build_query_substitutes_town():
-    assert build_query("Bisserup", "hangout", WEB_SEARCH_TERMS) == "restaurant café kro Bisserup"
+    assert build_query("Bisserup", "hangout", WEB_SEARCH_TERMS) == "restaurant café kro Bisserup Danmark"
 
 
 def test_jsonld_result_resolves_and_validates():

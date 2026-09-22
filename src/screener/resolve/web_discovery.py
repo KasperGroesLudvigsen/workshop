@@ -29,8 +29,15 @@ def _clean_title(title: str) -> str:
 
 
 def build_query(town: str, category: str, search_terms: dict[str, str]) -> str:
+    """Confirmed live 2026-09-20: a bare town name is not enough --
+    Boligsiden's own city name is the *postal town* (e.g. "Rude"), not the
+    actual local hamlet ("Bisserup" is a supplerende bynavn within it -- see
+    docs/HANDOFF.md item 7), and some postal towns collide with ordinary
+    English words, returning unrelated foreign results (a Texas restaurant
+    for "Rude"). Appending "Danmark" doesn't fix the postal-town-vs-hamlet
+    granularity gap, but does reliably filter out the cross-language noise."""
     template = search_terms[category]
-    return template.format(town=town)
+    return f"{template.format(town=town)} Danmark"
 
 
 def _resolve_result(

@@ -6,6 +6,9 @@
 <title>Summer House Screener</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <style>
   :root { color-scheme: light; }
   * { box-sizing: border-box; }
@@ -18,13 +21,17 @@
   #filters input[type="number"] { width: 90px; padding: 4px 6px; font-size: 13px; border: 1px solid #ccc; border-radius: 4px; }
   #filters label.checkbox { flex-direction: row; align-items: center; gap: 6px; font-size: 12px; }
   #layout { display: flex; height: calc(100vh - 116px); }
-  #map { flex: 1 1 55%; min-width: 320px; }
-  #table-wrap { flex: 1 1 45%; overflow: auto; background: #fff; }
-  table { border-collapse: collapse; width: 100%; font-size: 12px; }
-  th, td { padding: 6px 8px; border-bottom: 1px solid #eee; white-space: nowrap; text-align: left; }
-  th { position: sticky; top: 0; background: #f0efe9; cursor: pointer; user-select: none; }
+  #map { flex: 0 0 auto; min-width: 200px; }
+  #resizer { flex: 0 0 6px; cursor: col-resize; background: #e2e0d8; touch-action: none; }
+  #resizer:hover, #resizer.dragging { background: #cfcbbd; }
+  #table-wrap { flex: 1 1 auto; overflow: auto; background: #fff; min-width: 200px; }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; table-layout: fixed; min-width: 1400px; }
+  th, td { padding: 6px 8px; border-bottom: 1px solid #eee; white-space: nowrap; text-align: left; overflow: hidden; text-overflow: ellipsis; }
+  tr { height: 28px; }
+  th { position: sticky; top: 0; background: #f0efe9; cursor: pointer; user-select: none; z-index: 1; white-space: normal; }
   th.sorted::after { content: " \25BE"; }
-  tr:hover { background: #fbf8ee; }
+  tbody tr:not(.spacer):hover { background: #fbf8ee; cursor: pointer; }
+  tr.spacer td { padding: 0; border: none; }
   a.ext-link { margin-right: 6px; font-size: 11px; }
   .reason-none { color: #a33; }
   .reason-ok { color: #2a7a3b; }
@@ -56,11 +63,33 @@
 </div>
 <div id="layout">
   <div id="map"></div>
+  <div id="resizer" title="Drag to resize map/table"></div>
   <div id="table-wrap">
     <table id="table">
+      <colgroup>
+        <col style="width:145px">
+        <col style="width:100px">
+        <col style="width:70px">
+        <col style="width:60px">
+        <col style="width:60px">
+        <col style="width:90px">
+        <col style="width:70px">
+        <col style="width:60px">
+        <col style="width:65px">
+        <col style="width:65px">
+        <col style="width:75px">
+        <col style="width:55px">
+        <col style="width:60px">
+        <col style="width:45px">
+        <col style="width:60px">
+        <col style="width:55px">
+        <col style="width:50px">
+        <col style="width:190px">
+      </colgroup>
       <thead>
         <tr>
           <th>★</th>
+          <th data-key="price">Price</th>
           <th data-key="water_open_loose">Open water (km)</th>
           <th data-key="water_sea">Sea (km)</th>
           <th data-key="water_lake">Lake (km)</th>
@@ -72,7 +101,6 @@
           <th data-key="playground_km">Playground (km)</th>
           <th data-key="pool_km">Pool (km)</th>
           <th data-key="beach_km">Beach (km)</th>
-          <th data-key="price">Price</th>
           <th data-key="size_m2">m²</th>
           <th data-key="lot_size_m2">Lot m²</th>
           <th data-key="rooms">Rooms</th>
@@ -90,6 +118,7 @@ const DEFAULT_CONFIG = {{ config_json|safe }};
 
 const STORAGE_KEY_LIKED = 'summer-house-screener:liked';
 const STORAGE_KEY_HIDDEN = 'summer-house-screener:hidden';
+const STORAGE_KEY_SPLIT = 'summer-house-screener:split';
 
 function loadIdSet(key) {
   try {
@@ -111,32 +140,76 @@ let hiddenIds = loadIdSet(STORAGE_KEY_HIDDEN);
 function toggleLiked(id) {
   if (likedIds.has(id)) likedIds.delete(id); else likedIds.add(id);
   saveIdSet(STORAGE_KEY_LIKED, likedIds);
-  render();
+  computeAndRender();
 }
 function toggleHidden(id) {
   if (hiddenIds.has(id)) hiddenIds.delete(id); else hiddenIds.add(id);
   saveIdSet(STORAGE_KEY_HIDDEN, hiddenIds);
-  render();
+  computeAndRender();
 }
 
+// -- Map + marker clustering ------------------------------------------------
+// A plain L.marker per listing (the old approach) froze the tab for 60+
+// seconds at full-region scale (~1,300 markers created synchronously). A
+// cluster group batches marker insertion across animation frames
+// (chunkedLoading) instead of blocking the main thread in one go, and only
+// paints individual pins once you're zoomed in enough to see them apart.
 let map = null;
+let clusterGroup = null;
+const markersById = new Map();
+
 if (typeof L !== 'undefined') {
   map = L.map('map').setView([55.5, 11.6], 9);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '&copy; OpenStreetMap contributors'
   }).addTo(map);
+  if (typeof L.markerClusterGroup === 'function') {
+    clusterGroup = L.markerClusterGroup({ chunkedLoading: true, spiderfyOnMaxZoom: true });
+    map.addLayer(clusterGroup);
+  }
 } else {
   document.getElementById('map').innerHTML =
     '<p style="padding:16px;color:#a33;">Leaflet failed to load from the CDN (offline?) — table still works below.</p>';
 }
 
-let markers = [];
+function addMarker(marker) {
+  if (clusterGroup) clusterGroup.addLayer(marker); else marker.addTo(map);
+}
+function clearMarkers() {
+  if (clusterGroup) { clusterGroup.clearLayers(); }
+  else { markersById.forEach(m => map.removeLayer(m)); }
+}
+
+// Reveal a (possibly clustered) marker and open its popup -- used when a
+// table row is clicked.
+function selectListing(id) {
+  const marker = markersById.get(id);
+  if (!marker || !map) return;
+  const openAndPan = () => { map.panTo(marker.getLatLng()); marker.openPopup(); };
+  if (clusterGroup && typeof clusterGroup.zoomToShowLayer === 'function') {
+    clusterGroup.zoomToShowLayer(marker, openAndPan);
+  } else {
+    openAndPan();
+  }
+}
+
 let sortState = { key: 'hangout_km', dir: 1 };
 
 function fmt(n, digits) {
   if (n === null || n === undefined || Number.isNaN(n)) return '—';
   return Number(n).toFixed(digits === undefined ? 2 : digits);
+}
+function fmtPrice(price) {
+  if (price === null || price === undefined) return '—';
+  return Number(price).toLocaleString('da-DK') + ' kr';
+}
+// Distinguishes "category not resolved yet" from "resolved, nothing found
+// within radius" -- both used to render as the same bare "—".
+function fmtCategoryKm(cat, km) {
+  if (!cat) return '<em>n/a</em>';
+  if (km === null || km === undefined) return '<em>none</em>';
+  return fmt(km);
 }
 
 function deriveRow(listing, cfg) {
@@ -236,62 +309,116 @@ function sortRows(rows) {
   });
 }
 
-function render() {
+// -- Table virtualization ----------------------------------------------------
+// The old code rendered every row's <tr> into the DOM at once -- ~1,300 rows
+// (plus ~1,300 markers above) is what froze the tab. Only rows actually
+// scrolled into view (plus a small buffer) are ever in the DOM; two spacer
+// rows above/below make the scrollbar behave as if every row were present.
+const ROW_HEIGHT = 28;
+let currentRows = [];
+
+function computeAndRender() {
   const cfg = currentConfig();
   let rows = LISTINGS.map(l => deriveRow(l, cfg)).filter(r => r.passes).filter(r => applyExtraFilters(r, cfg));
   rows = rows.filter(r => cfg.showHidden || !r.hidden);
   if (cfg.likedOnly) rows = rows.filter(r => r.liked);
   rows = sortRows(rows);
+  currentRows = rows;
 
   document.getElementById('visible-count').textContent = rows.length;
 
-  if (map) {
-    markers.forEach(m => map.removeLayer(m));
-    markers = [];
-  }
-  const tbody = document.getElementById('table-body');
-  tbody.innerHTML = '';
+  updateMarkers(rows);
+  renderVisibleRows();
+}
 
+function updateMarkers(rows) {
+  clearMarkers();
+  markersById.clear();
+  if (!map) return;
   for (const row of rows) {
     const l = row.listing;
-    if (map) {
-      const marker = L.marker([l.lat, l.lon]).addTo(map);
-      marker.bindPopup(popupHtml(row));
-      markers.push(marker);
-    }
+    const marker = L.marker([l.lat, l.lon]);
+    marker.bindPopup(() => popupHtml(row)); // built lazily, only if opened
+    addMarker(marker);
+    markersById.set(l.listing_id, marker);
+  }
+}
 
-    const tr = document.createElement('tr');
-    if (row.liked) tr.classList.add('row-liked');
-    if (row.hidden) tr.classList.add('row-hidden');
-    tr.innerHTML = `
+function rowHtml(row) {
+  const l = row.listing;
+  const cls = ['row-clickable'];
+  if (row.liked) cls.push('row-liked');
+  if (row.hidden) cls.push('row-hidden');
+  return `
+    <tr data-id="${l.listing_id}" class="${cls.join(' ')}">
       <td>${actionButtonsHtml(row)}</td>
+      <td>${fmtPrice(l.price)}</td>
       <td>${fmt(row.openWater)}</td>
       <td>${fmt(l.water.sea_distance_km)}</td>
       <td>${row.lakeCandidate ? fmt(row.lakeCandidate.distance_km) : '—'}</td>
       <td class="${row.lakeCandidate && row.lakeCandidate.eligible ? 'reason-ok' : 'reason-none'}">${row.lakeCandidate ? row.lakeCandidate.eligibility_reason : '—'}</td>
-      <td>${fmt(row.hangoutKm)}</td>
+      <td>${fmtCategoryKm(l.hangout, row.hangoutKm)}</td>
       <td>${row.hangoutCount === null ? '—' : row.hangoutCount}</td>
-      <td>${fmt(row.groceryKm)}</td>
-      <td>${fmt(row.marinaKm)}</td>
-      <td>${fmt(row.playgroundKm)}</td>
-      <td>${fmt(row.poolKm)}</td>
-      <td>${fmt(row.beachKm)}</td>
-      <td>${l.price ?? '—'}</td>
+      <td>${fmtCategoryKm(l.grocery, row.groceryKm)}</td>
+      <td>${fmtCategoryKm(l.marina, row.marinaKm)}</td>
+      <td>${fmtCategoryKm(l.playground, row.playgroundKm)}</td>
+      <td>${fmtCategoryKm(l.pool, row.poolKm)}</td>
+      <td>${fmtCategoryKm(l.beach, row.beachKm)}</td>
       <td>${l.size_m2 ?? '—'}</td>
       <td>${l.lot_size_m2 ?? '—'}</td>
       <td>${l.rooms ?? '—'}</td>
       <td>${l.build_year ?? '—'}</td>
       <td>${linksHtml(l)}</td>
-    `;
-    tbody.appendChild(tr);
-  }
+    </tr>
+  `;
 }
 
+function renderVisibleRows() {
+  const wrap = document.getElementById('table-wrap');
+  const tbody = document.getElementById('table-body');
+  const theadH = document.querySelector('#table thead').getBoundingClientRect().height;
+  // scrollTop measures from the top of the scrollable content, which
+  // includes the sticky thead's normal-flow space -- tbody row 0 starts
+  // theadH px in, not at 0.
+  const scrollTop = Math.max(0, wrap.scrollTop - theadH);
+  const viewportH = wrap.clientHeight || 600;
+  const buffer = 10;
+  const startIdx = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - buffer);
+  const endIdx = Math.min(currentRows.length, Math.ceil((scrollTop + viewportH) / ROW_HEIGHT) + buffer);
+  const topSpacerH = startIdx * ROW_HEIGHT;
+  const bottomSpacerH = Math.max(0, currentRows.length - endIdx) * ROW_HEIGHT;
+  const colCount = document.querySelectorAll('#table thead th').length;
+
+  let html = '';
+  if (topSpacerH > 0) html += `<tr class="spacer" style="height:${topSpacerH}px"><td colspan="${colCount}"></td></tr>`;
+  for (let i = startIdx; i < endIdx; i++) html += rowHtml(currentRows[i]);
+  if (bottomSpacerH > 0) html += `<tr class="spacer" style="height:${bottomSpacerH}px"><td colspan="${colCount}"></td></tr>`;
+  tbody.innerHTML = html;
+}
+
+let scrollRAF = null;
+document.getElementById('table-wrap').addEventListener('scroll', () => {
+  if (scrollRAF) return;
+  scrollRAF = requestAnimationFrame(() => { scrollRAF = null; renderVisibleRows(); });
+});
+
+// Clicking a row (but not a button/link inside it) shows the matching pin.
+document.getElementById('table-body').addEventListener('click', (e) => {
+  if (e.target.closest('button, a')) return;
+  const tr = e.target.closest('tr[data-id]');
+  if (tr) selectListing(tr.dataset.id);
+});
+
+// Only the top 3 nearest per category are listed in a popup -- the full
+// candidate list can be long at low thresholds, and a popup isn't the place
+// to read all of them.
 function namesList(cat, radiusKm) {
   if (!cat) return '<em>not yet available</em>';
-  const within = cat.candidates.filter(c => c.distance_km <= radiusKm);
+  const within = cat.candidates.filter(c => c.distance_km <= radiusKm); // already sorted by ascending distance
   if (within.length === 0) return '<em>none within radius</em>';
-  return within.map(c => `${c.name} (${fmt(c.distance_km)} km)`).join(', ');
+  const shown = within.slice(0, 3).map(c => `${c.name} (${fmt(c.distance_km)} km)`).join(', ');
+  const more = within.length > 3 ? ` <em>+${within.length - 3} more</em>` : '';
+  return shown + more;
 }
 
 function popupHtml(row) {
@@ -334,18 +461,90 @@ function linksHtml(l) {
   `;
 }
 
-document.querySelectorAll('#filters input').forEach(el => el.addEventListener('input', render));
+document.querySelectorAll('#filters input').forEach(el => el.addEventListener('input', computeAndRender));
 document.querySelectorAll('th[data-key]').forEach(th => {
   th.addEventListener('click', () => {
     const key = th.dataset.key;
     if (sortState.key === key) { sortState.dir *= -1; } else { sortState = { key, dir: 1 }; }
     document.querySelectorAll('th').forEach(h => h.classList.remove('sorted'));
     th.classList.add('sorted');
-    render();
+    computeAndRender();
   });
 });
 
-render();
+// -- Layout: header/filters height can vary (the filters row wraps on
+// narrow viewports), so the map/table area's height is measured, not a
+// hard-coded constant.
+function updateLayoutHeight() {
+  const header = document.querySelector('header').getBoundingClientRect().height;
+  const filters = document.getElementById('filters').getBoundingClientRect().height;
+  document.getElementById('layout').style.height = `calc(100vh - ${header + filters}px)`;
+}
+
+// -- Resizable map/table split ------------------------------------------------
+function loadSplit() {
+  try {
+    const v = parseFloat(localStorage.getItem(STORAGE_KEY_SPLIT));
+    return (v >= 0.15 && v <= 0.85) ? v : 0.55;
+  } catch (e) { return 0.55; }
+}
+function saveSplit(v) {
+  try { localStorage.setItem(STORAGE_KEY_SPLIT, String(v)); } catch (e) { /* ignore */ }
+}
+
+let splitFrac = loadSplit();
+
+// Widths only -- cheap, no Leaflet involvement, safe to call on every
+// mousemove during a drag.
+function applyWidths(frac) {
+  const layout = document.getElementById('layout');
+  const totalW = Math.max(0, layout.clientWidth - 6); // minus resizer width
+  document.getElementById('map').style.width = (totalW * frac) + 'px';
+  document.getElementById('table-wrap').style.width = (totalW * (1 - frac)) + 'px';
+}
+// Widths + tell Leaflet its container actually changed size. Calling
+// invalidateSize() on every mousemove during a drag (rather than once at
+// the end) made the map's internal pixel origin drift wildly off-screen in
+// testing -- only call this at rest (initial load, window resize, drag end).
+function applySplit(frac) {
+  applyWidths(frac);
+  if (map) map.invalidateSize();
+}
+
+(function setupResizer() {
+  const resizer = document.getElementById('resizer');
+  let dragging = false;
+
+  function dragTo(clientX) {
+    const rect = document.getElementById('layout').getBoundingClientRect();
+    let frac = (clientX - rect.left) / rect.width;
+    frac = Math.max(0.15, Math.min(0.85, frac));
+    splitFrac = frac;
+    applyWidths(frac);
+  }
+  function start(clientX) { dragging = true; resizer.classList.add('dragging'); }
+  function end() {
+    if (!dragging) return;
+    dragging = false;
+    resizer.classList.remove('dragging');
+    saveSplit(splitFrac);
+    if (map) map.invalidateSize();
+  }
+
+  resizer.addEventListener('mousedown', (e) => { start(e.clientX); e.preventDefault(); });
+  window.addEventListener('mousemove', (e) => { if (dragging) dragTo(e.clientX); });
+  window.addEventListener('mouseup', end);
+
+  resizer.addEventListener('touchstart', (e) => { start(e.touches[0].clientX); }, { passive: true });
+  window.addEventListener('touchmove', (e) => { if (dragging) dragTo(e.touches[0].clientX); }, { passive: true });
+  window.addEventListener('touchend', end);
+
+  window.addEventListener('resize', () => { updateLayoutHeight(); applySplit(splitFrac); });
+})();
+
+updateLayoutHeight();
+applySplit(splitFrac);
+computeAndRender();
 </script>
 </body>
 </html>

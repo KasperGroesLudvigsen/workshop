@@ -99,4 +99,5 @@ def test_normalize_case_maps_confirmed_fields():
     assert listing["days_on_market"] == 10
     assert listing["address"] == "Havnevej 1"
     assert listing["zip_code"] == 4243
+    assert listing["town"] == "Rude"
     assert listing["url"] == "https://boligsiden.dk/viderestilling/abc-123"

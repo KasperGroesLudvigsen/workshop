@@ -78,6 +78,26 @@ class Database:
         ).fetchone()
         return row[0] if row else None
 
+    def get_cached_response_row(self, key: str) -> tuple[int, str] | None:
+        """Like :meth:`get_cached_response` but also returns the original
+        ``status_code``, so a replayed cache hit can raise the same error a
+        previously-blocked/failed response did, rather than silently
+        looking like a 200."""
+        row = self._con.execute(
+            "SELECT status_code, body FROM raw_responses WHERE cache_key = ?", [key]
+        ).fetchone()
+        return (row[0], row[1]) if row else None
+
+    def count_raw_responses_since(self, source: str, since: datetime) -> int:
+        """Count of *actual* fetches (rows written) for ``source`` with
+        ``fetched_at >= since`` — used for a rolling monthly credit budget.
+        A cache hit never writes a new row, so this only counts genuine
+        network calls, not replayed ones."""
+        row = self._con.execute(
+            "SELECT COUNT(*) FROM raw_responses WHERE source = ? AND fetched_at >= ?", [source, since]
+        ).fetchone()
+        return int(row[0])
+
     def save_raw_response(
         self,
         *,

@@ -34,6 +34,25 @@ of the three signals) and a *loose* mode (any nearby lake counts, signal or not)
 computed for every listing, so the strict/loose toggle in the UI is instant — it never
 triggers a re-score.
 
+### How the front end is built
+
+There's no frontend build step and no backend server-side logic — `src/screener/site/build.py`
+renders one self-contained `data/site/index.html` from a single Jinja2 template
+(`site/templates/index.html.j2`), with the full list of already-scored listings and the
+threshold config both embedded directly as JSON in a `<script>` block. Everything after that is
+plain, dependency-free JavaScript in that same file (no React/Vue, no bundler, no npm install)
+plus [Leaflet](https://leafletjs.com) pulled from a CDN for the map.
+
+All filtering, sorting, and threshold-driven recomputation happen **client-side, against the
+embedded JSON** — moving a threshold slider re-runs a single `render()` function that
+re-derives every row's pass/fail and distances from the raw scored data and redraws both the
+map markers and the table, with no server round-trip and no re-fetch. This is what makes the
+live threshold controls instant: every distance/candidate-list the UI could ever need was
+already computed once by the Python scorer and shipped in the page, so the JS never has to
+re-score anything, only re-filter/re-sort numbers already in memory. Liked/hidden state is the
+one piece of real client-side state, kept in `localStorage` (see "Liking and hiding listings"
+below) rather than sent anywhere, since there's nowhere to send it to.
+
 ## What it shows
 
 **The map** (Leaflet + OpenStreetMap tiles): one marker per surviving listing. Clicking a pin
@@ -136,11 +155,12 @@ that everything is wired correctly.
 | Source | Used for | Access |
 |---|---|---|
 | [Boligsiden](https://www.boligsiden.dk) | The listings themselves (fritidsbolig, i.e. `addressType: "holiday house"`) | Public JSON API (`api.boligsiden.dk`), plain HTTP — no auth, no browser impersonation needed |
-| [Geofabrik](https://download.geofabrik.de) OSM extract for Denmark | Coastline, lakes/reservoirs, beaches, marinas, playgrounds, pools, swimming areas | Public `.osm.pbf` download |
+| [Geofabrik](https://download.geofabrik.de) OSM extract for Denmark | Coastline, lakes/reservoirs, beaches, marinas, playgrounds, pools, swimming areas, plus named business POIs (hangout/grocery/etc. — catches businesses CVR structurally can't see) | Public `.osm.pbf` download |
 | [Danmarks Miljøportal](https://arealdata.miljoeportal.dk) — PULS bathing-water register | Officially designated bathing-water sites (lake eligibility signal) | Public GeoServer WFS, no auth |
 | [cvrapi.dk](https://cvrapi.dk) | Business name → registered company address/status | Free, unofficial CVR lookup API |
 | Erhvervsstyrelsen `cvr-permanent` | Discovering hangout/grocery/etc. businesses by industry code + postal code — cvrapi.dk can't enumerate, only look up one name at a time | Free system-til-system access (username/password), plain HTTP, Elasticsearch |
 | [Datafordeleren](https://datafordeler.dk) — DAR (Danmarks Adresseregister) | Confirming a candidate address is real, and its coordinates | GraphQL, requires a free registered API key |
+| [Tavily](https://tavily.com) | Last-resort business discovery for a (town, category) neither CVR nor OSM covered | Free tier (1,000 credits/month), requires a free API key — budget-capped and cached, see `docs/HANDOFF.md` |
 
 ## Current status
 
@@ -148,9 +168,12 @@ The core pipeline — fetch, water/amenity scoring, business discovery/resolutio
 interactive site — is built, and a real end-to-end run (`jobs/run_real.py`) against live
 Boligsiden data, the real OSM extract, the real bathing-water register, and a real discovered
 business directory works today, verified for one postal code. Hangout and grocery are now
-real hard filters, not just water. What's **not** built yet: businesses that aren't registered
-in CVR at all (a much smaller gap now — web-search gap-fill would still catch those),
-automatic nightly re-runs with new-listing notifications, a Fødevarestyrelsen
+real hard filters, not just water. Business discovery layers three independent sources —
+CVR bulk enumeration, OSM-tagged POIs (catches businesses CVR structurally can't see, e.g. a
+kro registered under an unrelated holding company), and a budget-capped Tavily web-search
+fallback with a persistent cache (only ever searches a given town/category once) — so the
+"not registered in CVR at all" gap from earlier is now mostly closed. What's **not** built
+yet: automatic nightly re-runs with new-listing notifications, a Fødevarestyrelsen
 inspection-report cross-check ("Smiley"), and deployment automation. The address validator is
 now rate-limited, so a full-region run with discovery should be safe to attempt, but hasn't
 been run at that scale yet — likely slow (thousands of businesses × up to 2 validation calls
@@ -197,6 +220,7 @@ Create a `.env` file in the repo root (already gitignored — never commit it):
 DATAFORDELER_DAR_API_KEY=<your key>
 CVR_USERNAME=<your cvr-permanent username>
 CVR_PASSWORD=<your cvr-permanent password>
+TAVILY_API_KEY=<your tavily key>
 ```
 
 `DATAFORDELER_DAR_API_KEY`: get a free key at [datafordeler.dk](https://datafordeler.dk) —
@@ -209,7 +233,12 @@ Administration", generate an API key, and request access to **Danmarks Adressere
 (roughly a three-week turnaround) — used to discover hangout/grocery/etc. businesses by
 industry code + postal code.
 
-Neither is needed for the demo site below.
+`TAVILY_API_KEY`: sign up free at [tavily.com](https://tavily.com) (no card, ~2 min) — used
+only as a last-resort business-discovery fallback for a (town, category) neither CVR nor OSM
+covered. Optional: if it's missing, `jobs/run_real.py` logs a warning and skips this fallback
+rather than failing the run.
+
+None of the three are needed for the demo site below.
 
 ### 3. Run the test suite
 
@@ -254,10 +283,19 @@ Then run the real pipeline — a live Boligsiden fetch across the postal ranges 
 
 This writes real listings to `data\site\index.html` for the full configured
 Sjælland/Lolland/Falster/Møn scope, with real hangout/grocery/fish_shop/wine_shop/butcher
-discovery wired in (`CVR_USERNAME`/`CVR_PASSWORD` required — see step 2). **Note**: at full
-regional scope this makes a large number of rate-limited (5 req/sec) address-validation calls
-— expect it to take a while, or narrow `postal_ranges` in `config/thresholds.yaml` first to
-try it quickly. See `docs/HANDOFF.md` for the current state of each piece and what's next.
+discovery wired in (`CVR_USERNAME`/`CVR_PASSWORD` required — see step 2). **Note**: the first
+run at full regional scope makes a large number of rate-limited (5 req/sec) CVR
+address-validation calls plus a ~20-minute OSM business-POI extraction pass — expect it to take
+a while, or narrow `postal_ranges` in `config/thresholds.yaml` first to try it quickly.
+
+**Re-running for fresh listings is fast after the first run.** CVR business discovery and OSM
+POI extraction only depend on the region, not on which listings exist, so both are cached to
+disk (`data\cvr_business_cache.pkl`, `data\osm_poi_cache.pkl`) after the first run and reused
+automatically — only the Boligsiden listings fetch and scoring (seconds) actually redo work.
+The CVR cache auto-refreshes itself after 7 days (`cvr_cache_max_age_days` in
+`config/thresholds.yaml`); the OSM POI cache only rebuilds when `denmark-latest.osm.pbf` itself
+is re-downloaded. Pass `--rebuild-discovery-cache` to `jobs\run_real.py` to force both to rebuild
+regardless. See `docs/HANDOFF.md` for the current state of each piece and what's next.
 
 ### 6. Reopening the app later
 

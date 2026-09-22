@@ -5,8 +5,12 @@ Read this first if you're picking this project back up.
 ## tl;dr
 
 - Branch: `main` on `KasperGroesLudvigsen/workshop`.
-- M0–M5 done, plus real hangout/grocery business discovery, plus M7 (business discovery
-  beyond CVR) mostly done. 82 tests pass.
+- M0–M5 and M7 (business discovery beyond CVR) done. 105 tests pass.
+- **2026-09-21**: CVR discovery and OSM POI extraction — both region-wide and
+  listing-independent, together the bulk of a real run's ~30 minutes — are now cached to disk
+  (`data/cvr_business_cache.pkl`, `data/osm_poi_cache.pkl`) and only rebuilt when actually
+  stale, so running `jobs/run_real.py` a few times a week (to pick up new listings) doesn't
+  redo either pass every single time. See item 10 below.
 - **2026-09-15**: closed all 5 verification gaps from the previous handoff using real internet
   access, then **replaced Boliga with Boligsiden** as the listings source entirely, after
   Boliga's Cloudflare protection proved unreliable for a real unattended run.
@@ -23,12 +27,19 @@ Read this first if you're picking this project back up.
   gate needed) plus a Tavily web-search fallback (free, no card, unlike the
   originally-assumed Brave Search API which lost its free tier). OSM POI extraction confirmed
   against the real local `data/denmark-latest.osm.pbf`: both Bisserup test cases found, plus
-  a bonus hit. See item 8 below. One open item: add `TAVILY_API_KEY` to exercise the
-  web-search fallback for real.
+  a bonus hit.
+- **2026-09-20**: finished M7 — added the gap-detection/orchestration layer that decides
+  *which* (town, category) pairs actually need a Tavily search (nothing called
+  `discover_via_web_search` before this), a real page fetcher, a real read-through cache
+  (the `raw_responses` table's `get_cached_response` had existed since the start but was
+  never actually read by any fetch client until now), and a hard monthly credit budget plus
+  a per-run pacing cap. Verified against the real Tavily API for real (Bisserup, postal 4243)
+  — see item 9 below for the two real findings from that run and the current residual
+  limitation. M7 is now fully done.
 - A real end-to-end run (`jobs/run_real.py`) works today: real fritidsbolig listings across
   the configured region, scored against the real OSM store, bathing-water data, and a real
-  discovered business directory (CVR + OSM POIs).
-- M6 (findsmiley) remains, now the only real residual gap alongside M7's two open items above.
+  discovered business directory (CVR + OSM POIs + Tavily gap-fill).
+- M6 (findsmiley) is now the only real residual gap.
 - M8–M10 not started.
 - Full milestone detail: `docs/PLAN.md`.
 
@@ -267,12 +278,99 @@ recurring, no card).
   (`config/thresholds.yaml`, parallel to `cvr_branch_codes`), and for each result runs the
   *same* JSON-LD → regex → LLM cascade `resolve/pipeline.py` already uses, gated by the same
   `AddressValidator` — unlike OSM POIs, a search result's page really is raw text that could
-  be wrong. 10 unit tests (fake transport + fake page fetcher, mirroring
-  `test_cvr_discovery.py`'s pattern) all pass. **Not yet exercised against the real Tavily
-  API** — `TAVILY_API_KEY` isn't in `.env` yet (sign up free at tavily.com, no card, ~2 min);
-  this is the blocking prerequisite for the plan's test-case verification step 2 (literally
-  searching for "Bisserup Strand Kro"/"Bisserup Is og Grillhus" and confirming the full chain
-  resolves and validates).
+  be wrong.
+
+### 9. M7 finished for real: gap-detection orchestration, real cache, budget, and the real-API findings — done, 2026-09-20
+
+Everything in item 8 above was built and unit-tested, but nothing ever actually called it —
+there was no code anywhere deciding *which* town/category needed a search, and no real
+`PageFetcher` implementation for it to fetch a search result's own page with (only `None` or
+test fakes existed). Closed all of that:
+
+- **`resolve/web_discovery_gaps.py`** (new): `find_gaps` reuses `geo.amenities.category_summary`
+  (the exact same nearest-distance helper scoring itself uses) against the CVR+OSM-only
+  directory to decide, per listing town, whether a category has *no* candidate within
+  `amenity_search_radius_km` (15km, reused rather than adding a new threshold) — including
+  categories the directory doesn't have at all (`ice_cream`, no CVR code). Deduped by
+  (town, category). `prioritize_gaps` puts `hangout`/`grocery` (the actual hard filters) ahead
+  of the four informational categories. `fill_gaps` calls `discover_via_web_search` per gap,
+  stopping gracefully (not crashing) on either the monthly budget or a real Tavily block.
+- **`fetch/page_fetch.py`** (new): the first real `PageFetcher` implementation in the codebase
+  — plain `requests.get`, returns `None` (never raises) on any failure.
+- **The `raw_responses` cache is now actually a read-through cache for Tavily**: `db.py`'s
+  `get_cached_response` has existed since M0 but no fetch client ever called it — every
+  client only ever *wrote* to this table. `TavilyClient.search` now checks it first; a hit
+  replays the original response (including a previously-blocked one, so it fails the same way
+  twice, not silently) with **no network call and no row rewrite**, so `fetched_at` never
+  advances and monthly budget accounting stays correct. `web_search_monthly_budget` (900) and
+  `web_search_max_calls_per_run` (150) are both new `config/thresholds.yaml` values, enforced
+  inside `TavilyClient` (budget, checked before every non-cached call) and in `fill_gaps`
+  (per-run cap, tracked via the new `TavilyClient.calls_made` counter which only increments on
+  genuine network calls).
+- **Real bug found and fixed while verifying this live**: `resolve/llm_extract.py`'s
+  `anthropic_extractor` raised a raw `ModuleNotFoundError` when the optional `llm` extra
+  wasn't installed — `extract_candidate`'s except clause only caught `RuntimeError`, so the
+  whole gap-fill pass crashed the first time the JSON-LD→regex cascade actually fell through
+  to step 4 for real (never exercised before now — every existing test always injected a fake
+  `llm_extractor`). Fixed by wrapping the lazy `import anthropic` and re-raising as
+  `RuntimeError`, so "extra not installed" degrades exactly like "API key not set" already did
+  — no candidate, not a crash.
+- **Real finding, not (yet) fixed — query quality for small hamlets**: verified live against
+  postal 4243 (Bisserup). Boligsiden's own `cityName` field (now captured as `listing["town"]`
+  in `fetch/boligsiden.py`'s `normalize_case`) is the *postal town* ("Rude"), not the actual
+  local hamlet ("Bisserup" is a `supplerende bynavn` within it — the exact same DAR field that
+  caused item 7's Bug A). Worse, "Rude" happens to also be an ordinary English word, so the
+  first live search returned unrelated US results (a Dallas café, a Texas restaurant review).
+  **Mitigated**: `resolve/web_discovery.py`'s `build_query` now appends `"Danmark"` to every
+  query — confirmed live this alone was enough to make the *same* "Rude"-based search return
+  genuinely Bisserup-relevant results (`bisserupstrandkro.dk`, `Bisserup_Strand_Kro` on
+  TripAdvisor, `bisserup-fisk` on Kompass). The underlying postal-town-vs-hamlet granularity
+  gap is **not** fixed — Boligsiden simply doesn't expose the finer hamlet name, and getting it
+  would need a real reverse-geocode (e.g. nearest OSM `place=hamlet/village` node, not
+  currently extracted into `GeometryStore` at all) — not attempted, out of scope for this pass.
+- **Real finding, not fixed, deliberately not chased further — page-fetch blocking**: every
+  single search-result page fetched during the live verification run (Trustpilot, TripAdvisor,
+  Kompass, Yelp, even the business's own `bisserupstrandkro.dk`) returned HTTP 403 to
+  `fetch/page_fetch.py`'s plain `requests.get`. This is the same class of problem that made
+  Boliga's Cloudflare protection unreliable enough to drop entirely (see the top of this file)
+  — except here it's hitting a tertiary, best-effort fallback, not the primary listings source,
+  so the fix isn't "switch data source", it's "accept some real businesses won't be
+  extractable via this path". Deliberately **not** pursuing browser-impersonation
+  (`curl_cffi`-style TLS/fingerprint spoofing) to get past this — that's meaningfully different
+  from a plain unrealistic User-Agent, and this fallback's whole design already assumes a
+  real, non-trivial miss rate (the JSON-LD → regex → LLM cascade already tolerates individual
+  page failures without crashing). Net result of the live run: gap-detection, real Tavily
+  calls, and the persistent cache (confirmed: an identical re-run made **zero** new real
+  calls) all verified working end to end; zero businesses were actually resolved in this
+  particular narrow sample because every result page happened to be blocked. A future session
+  could try a more realistic (but still honest, non-impersonating) `User-Agent` string as a
+  mild, low-risk mitigation if this turns out to matter at full-region scale.
+
+### 10. Discovery caching: CVR + OSM POI no longer redone on every run — done, 2026-09-21
+
+The user will be re-running `jobs/run_real.py` a few times a week to pick up fresh listings.
+CVR bulk discovery and OSM POI extraction are both region-wide, not listing-scoped — they had
+no reason to be redone every time, but were (each `_search`/pyosmium pass only ever *wrote* to
+`db.py`'s `raw_responses` cache, exactly the write-only gap M7's Tavily cache had before item 9
+fixed it). Closed with a small generic helper, **`fetch/discovery_cache.py`**'s `load_or_build`
+(pickle-backed, mirrors `geo/store.py`'s existing `GeometryStore.save`/`.load` convention),
+wrapping both stages' *output* (the fully resolved `dict[str, list[ResolvedBusiness]]`, not
+individual HTTP pages) so a cache hit skips Elasticsearch queries, DAR validation calls, and
+the pyosmium pass alike. Two different staleness signals: OSM POI is stale only when
+`denmark-latest.osm.pbf`'s mtime is newer than the cache (mirrors how `osm_store.pkl` already
+works — build once, reuse until you re-download); CVR discovery has no local source file to
+check, so it uses a configurable max-age (`cvr_cache_max_age_days`, default 7). The existing
+inline CVR discovery loop in `jobs/run_real.py` was extracted into a proper, directly-tested
+function, `resolve/cvr_discovery.py`'s `discover_and_resolve_all_categories` (pure refactor, no
+behavior change). New `--osm-poi-cache`/`--cvr-cache`/`--rebuild-discovery-cache` CLI args on
+`jobs/run_real.py`. 10 new/extended tests (`tests/test_discovery_cache.py`,
+`tests/test_cvr_discovery.py`).
+
+**Confirmed live, real numbers** (postal 4243, full-region CVR/OSM scope since those stages
+aren't listing-scoped): first call (cold cache, real CVR discovery + DAR validation + real OSM
+POI extraction) took **2,132.8s (~35.5 min)**; an immediate second call with both caches warm
+took **0.6s** — hangout/grocery layer point counts identical between the two (16,328/4,161),
+confirming the cache round-trips correctly, not just quickly.
 
 ## Decisions already made (don't re-litigate without new information)
 
@@ -299,12 +397,12 @@ recurring, no card).
   Fødevarestyrelsen inspection report (found via the findsmiley link `resolve/jsonld.py`'s
   `find_findsmiley_link` already extracts during JSON-LD parsing) and attach inspection date
   + address cross-check to resolved businesses.
-- **M7 (business discovery beyond CVR) — see item 8 above**: OSM POI discovery
-  (`fetch/osm_poi.py`) is built, unit-tested, wired into `run_real.py`, and confirmed
-  against the real `data/denmark-latest.osm.pbf` (both Bisserup test cases found). The
-  Tavily web-search fallback (`fetch/web_search.py`, `resolve/web_discovery.py`) is built and
-  unit-tested with fakes, but not yet exercised against the real API — needs
-  `TAVILY_API_KEY` in `.env`.
+- **M7 (business discovery beyond CVR) — done, see items 8-9 above**: OSM POI discovery
+  (`fetch/osm_poi.py`) and the Tavily web-search fallback (`fetch/web_search.py`,
+  `resolve/web_discovery.py`, `resolve/web_discovery_gaps.py`) are both wired into
+  `run_real.py` and confirmed against real data/APIs. Residual, deliberately-not-chased
+  limitation: many real business pages block a plain HTTP fetch (item 9's page-fetch-blocking
+  finding) — a lower discovery yield for this fallback specifically, not a crash risk.
 - **M8 (nightly orchestration)**: `jobs/nightly.py` doesn't exist. Should tie together fetch
   (M1) → score (M3-M7) → diff against yesterday (use `db.py`'s `save_scored_listings` and
   `passing_listing_ids`, already implemented) → notify via ntfy on new passes.
@@ -322,9 +420,6 @@ recurring, no card).
 
 ## Credentials / access needed from the user (not solvable by writing more code)
 
-- **`TAVILY_API_KEY`** — sign up free at tavily.com (no card, ~2 min), add to `.env`.
-  Required before M7's web-search fallback (`fetch/web_search.py`) can be exercised for real;
-  OSM POI discovery (M7's primary mechanism) needs no new credential.
 - **Hetzner account + server** — required before M10's deployment steps can be executed
   (the runbook can be written without it, but not run).
 - **ntfy topic name** — trivial, just needs the user (or you) to pick a string.
@@ -333,16 +428,18 @@ recurring, no card).
   This is the least urgent gap — steps 1-3 of the resolution pipeline should resolve most
   businesses before this ever triggers.
 
-## Test suite map (82 tests, all passing on fixtures)
+## Test suite map (105 tests, all passing on fixtures)
 
 | File | Covers |
 |---|---|
 | `test_boligsiden.py` | Pagination + client-side postal-range filtering, truncation assertion, duplicate-`caseID` handling, 403/429 handling, field mapping |
-| `test_cvr_discovery.py` | cvr-permanent query shape for *both* `virksomhed`/`produktionsenhed` indices, pagination, cross-index dedup by physical address, result-window/blocked-status handling, and the resolve-layer mapping (validated vs. dropped hits, missing-field skip) |
+| `test_cvr_discovery.py` | cvr-permanent query shape for *both* `virksomhed`/`produktionsenhed` indices, pagination, cross-index dedup by physical address, result-window/blocked-status handling, the resolve-layer mapping (validated vs. dropped hits, missing-field skip), and `discover_and_resolve_all_categories` combining per-category results end to end |
 | `test_osm_extract.py` | pyosmium extraction, area computation, spatial queries against the synthetic fixture |
 | `test_osm_poi.py` | OSM POI tag→category mapping, node + way(centroid) extraction, unnamed/irrelevant-tag skipping, against `tests/fixtures/business_pois.osm.xml` (real Bisserup coordinates) |
-| `test_web_search.py` | `TavilyClient` request shape (Bearer auth, query body), result parsing, blocked-status handling, missing-key error |
-| `test_web_discovery.py` | Per-town/category query building, the JSON-LD → regex → LLM cascade against fake search results and pages, unvalidated-candidate dropping, page-fetch-failure handling |
+| `test_web_search.py` | `TavilyClient` request shape (Bearer auth, query body), result parsing, blocked-status handling, missing-key error, the read-through cache (hit skips transport and never rewrites the row, a cached blocked response replays as blocked), monthly-budget enforcement, `calls_made` only counting real network calls |
+| `test_web_discovery.py` | Per-town/category query building (incl. the "Danmark" disambiguation suffix), the JSON-LD → regex → LLM cascade against fake search results and pages, unvalidated-candidate dropping, page-fetch-failure handling |
+| `test_web_discovery_gaps.py` | Gap detection (missing/too-far category, dedup by town+category, listings without a town), hard-filter-category prioritization, `fill_gaps` stopping gracefully on the per-run cap / monthly budget / a real block |
+| `test_discovery_cache.py` | `save_cache`/`load_cache` round-trip, `is_stale` (missing cache, source newer/older, max-age exceeded/not), `load_or_build` (cache hit never calls the real build function, cache miss builds+persists, `force_rebuild` bypasses a fresh cache) |
 | `test_water.py` | Lake area filtering, eligibility signals (badevand/swimming_area/beach), strict vs. loose divergence |
 | `test_bathing_water.py` | WFS-shaped GeoJSON schema validation, closed-station filtering, spatial site-to-lake matching, coastal sites excluded |
 | `test_cvr.py`, `test_cvr_match.py` | CVR client parsing, quota/ban vs. not-found, fuzzy name matching, closed-business rejection |
@@ -362,14 +459,19 @@ lake/coastline/marina layout looks like if you need more fixture data later.
 enough that a validation-result cache hasn't been needed yet). That run predates item 7's two
 bug fixes above, though.
 
-1. Once `TAVILY_API_KEY` is added, run the Tavily fallback against the two Bisserup test
-   cases by name (item 8's one open item) to close out M7's test-case verification.
-2. Re-run `jobs/run_real.py` for the full region now that items 7's fixes and item 8's OSM
-   POI wiring are in, and compare hangout/grocery candidate/validation counts against the
-   2026-09-19 numbers (945/108 candidates, 529/65 validated) — expect both CVR counts to hold
-   and OSM-sourced entries (`source_step == "osm_poi"`) to add previously-invisible
-   businesses like the Bisserup kro on top.
-3. M6 (findsmiley) — feeds off the same `resolve/jsonld.py` findsmiley-link extraction M7's
+1. Re-run `jobs/run_real.py` for the full region now that item 7's fixes and items 8-9's OSM
+   POI + Tavily gap-fill wiring are all in, and compare hangout/grocery candidate/validation
+   counts against the 2026-09-19 numbers (945/108 candidates, 529/65 validated) — expect both
+   CVR counts to hold, OSM-sourced entries (`source_step == "osm_poi"`) to add
+   previously-invisible businesses like the Bisserup kro, and a `web_discovery_gaps: N gap(s)
+   found` log line reporting how many (town, category) pairs needed the Tavily fallback at
+   full region scale. Watch `data/screener.duckdb`'s `raw_responses` row count for
+   `tavily_search` against `web_search_monthly_budget` (900) the first time this runs at full
+   scale with a cold cache.
+2. M6 (findsmiley) — feeds off the same `resolve/jsonld.py` findsmiley-link extraction M7's
    web-search path also uses.
+3. Optional, only if the full-region run shows the item 9 page-fetch-blocking finding is
+   costing real discovery yield: try a more realistic (but still honest) `User-Agent` in
+   `fetch/page_fetch.py` as a mild mitigation — deliberately not attempted yet, see item 9.
 4. M8 (nightly orchestration) → M9 remainder (including the fish_shop/wine_shop/butcher table
    columns discovery now populates) → M10.

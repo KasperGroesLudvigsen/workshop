@@ -187,5 +187,6 @@ def normalize_case(raw: dict[str, Any]) -> dict[str, Any]:
         "days_on_market": raw.get("daysOnMarket"),
         "address": street or None,
         "zip_code": address.get("zipCode"),
+        "town": address.get("cityName"),
         "url": f"https://boligsiden.dk/viderestilling/{case_id}",
     }

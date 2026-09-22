@@ -9,7 +9,7 @@ from screener.fetch.cvr_discovery import (
     TransportResponse,
 )
 from screener.resolve.address_regex import AddressCandidate, ValidatedAddress
-from screener.resolve.cvr_discovery import resolve_discovered_businesses
+from screener.resolve.cvr_discovery import discover_and_resolve_all_categories, resolve_discovered_businesses
 
 # -- fetch/cvr_discovery.py -----------------------------------------------
 
@@ -178,3 +178,30 @@ def test_skips_hit_missing_address_fields():
     hit = {"cvrNummer": 1, "virksomhedMetadata": {"nyesteNavn": {"navn": "No Address ApS"}, "nyesteBeliggenhedsadresse": {}}}
     validator = _FakeValidator(("Havnevej 1", "4243", "Rude"))
     assert resolve_discovered_businesses([hit], validator, category="hangout") == []
+
+
+# -- discover_and_resolve_all_categories (end-to-end fetch + resolve) -----
+
+
+def test_discover_and_resolve_all_categories_combines_per_category_results():
+    hangout_hit = {"_source": {"Vrvirksomhed": _raw_business("Bisserup Havnekro ApS", "Havnevej", "1", 4243, "Rude")}}
+
+    def transport(url, body, auth):
+        if "/virksomhed/_search" in url and "56" in str(body):
+            return TransportResponse(200, "{}", {"hits": {"total": 1, "hits": [hangout_hit]}})
+        return _empty_page(url, body, auth)
+
+    client = _client(transport)
+    validator = _FakeValidator(("Havnevej 1", "4243", "Rude"))
+
+    result = discover_and_resolve_all_categories(
+        client, validator,
+        branch_codes_by_category={"hangout": ["56"], "grocery": ["47"]},
+        postal_ranges=[(4000, 4990)],
+    )
+
+    assert set(result.keys()) == {"hangout", "grocery"}
+    assert result["grocery"] == []
+    assert len(result["hangout"]) == 1
+    assert result["hangout"][0].name == "Bisserup Havnekro ApS"
+    assert result["hangout"][0].source_step == "cvr_discovery"

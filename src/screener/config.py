@@ -38,6 +38,9 @@ class Settings:
     informational_categories: list[str]
     cvr_branch_codes: dict[str, list[str]]
     web_search_terms: dict[str, str]
+    web_search_monthly_budget: int
+    web_search_max_calls_per_run: int
+    cvr_cache_max_age_days: int
     boligsiden: BoligsidenSettings
 
     @property
@@ -61,6 +64,9 @@ def load_settings(path: Path | str = DEFAULT_CONFIG_PATH) -> Settings:
         informational_categories=list(raw["informational_categories"]),
         cvr_branch_codes={k: list(v) for k, v in raw.get("cvr_branch_codes", {}).items()},
         web_search_terms={k: str(v) for k, v in raw.get("web_search_terms", {}).items()},
+        web_search_monthly_budget=int(raw["web_search_monthly_budget"]),
+        web_search_max_calls_per_run=int(raw["web_search_max_calls_per_run"]),
+        cvr_cache_max_age_days=int(raw["cvr_cache_max_age_days"]),
         boligsiden=BoligsidenSettings(
             base_url=boligsiden_raw["base_url"],
             requests_per_second=float(boligsiden_raw["requests_per_second"]),

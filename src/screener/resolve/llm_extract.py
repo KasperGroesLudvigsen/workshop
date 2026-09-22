@@ -39,7 +39,16 @@ DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 
 
 def anthropic_extractor(text: str, *, model: str = DEFAULT_MODEL) -> dict:
-    import anthropic  # lazy: only required if this path actually executes
+    try:
+        import anthropic  # lazy: only required if this path actually executes
+    except ImportError as e:
+        # Same "LLM extraction unavailable" outcome as a missing API key
+        # below -- both are RuntimeError so extract_candidate's existing
+        # except clause degrades this to "no candidate", not a crash.
+        raise RuntimeError(
+            "anthropic package not installed — install the optional `llm` extra "
+            "(pip install -e \".[llm]\") to enable the LLM-extraction fallback step"
+        ) from e
 
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
