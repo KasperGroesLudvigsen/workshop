@@ -83,6 +83,14 @@ cvr_branch_codes:
   wine_shop: ["472500"]                # Detailhandel med drikkevarer (no wine-specific DB07 code exists)
   butcher: ["472200"]                  # Detailhandel med kød og kødprodukter
 
+# Defense-in-depth against a CVR branch code that's technically on file but
+# doesn't reflect the business's real trade (confirmed live: "FRIIS BYG &
+# HAVE", a building/garden supplies business, is registered under a
+# restaurant-adjacent code) -- a candidate whose name contains one of these
+# is skipped even if its branch code and address both check out.
+cvr_category_keyword_denylist:
+  hangout: ["byg", "tømrer", "snedker", "vvs", "murer", "anlægsgartner", "elektriker", "malerfirma"]
+
 # M7 web-search fallback (resolve/web_discovery.py) — only reached for a
 # town/category CVR discovery and OSM POI extraction both missed. "{town}"
 # is substituted at query time; the Danish noun matches what a business's

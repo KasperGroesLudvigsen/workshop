@@ -22,3 +22,10 @@ Analyze these errors and how to fix them.
 - "FRIIS BYG & HAVE" (Rødkullevej 60, 4230 Rødkulle Huse) listed as close to the summerhouse on Kildevej 40 in Skælskør does not seem to be an actual cafe or restaurant.  
 - In our data, the hangout "Havblik Agersø" is registered to Skolevangen 25, Magleby, but that's just where the business is registered. The actual restaurant is in Agersø Møllevej 9A, 4244 Agersø By.
 - Café & Restaurant Mona, Adelgade 2, st, 4720 Præstø is permanently closed according to Google Maps. 
+
+### 3 - oversvømmelse
+For each listing, add a data point that indicates the risk of "oversvømmelse" from seawater on land. DinGeo has data on it like this: https://www.dingeo.dk/adresse/4243-rude/skolebakken-14/#oversvoem
+
+Form your own ideas on how to implement this. My ideas are:
+1) fetch the data from dinGeo if possible and allowed. Either via scrapes or API. We are using this for a hobby project - not commercially
+2) find out how far above sea level listings are via højdekort or similar and define your own scoring mechanism. To sanity check the scoring mechanism, you can select a few test cases from the listing data set that you look up on dinGeo

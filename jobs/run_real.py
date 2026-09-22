@@ -20,8 +20,10 @@ from screener.config import REPO_ROOT, Settings, load_settings
 from screener.db import Database
 from screener.fetch.bathing_water import build_badevand_lookup, load_badevand_sites
 from screener.fetch.boligsiden import BoligsidenClient, normalize_case
+from screener.fetch._rate_limit import RateLimiter
 from screener.fetch.cvr_discovery import CvrPermanentClient
 from screener.fetch.discovery_cache import load_or_build
+from screener.fetch.flood_risk import fetch_flood_risk
 from screener.fetch.listing_photo import fetch_listing_photo_url
 from screener.fetch.osm_poi import extract_business_pois
 from screener.fetch.page_fetch import fetch_html_page
@@ -29,6 +31,7 @@ from screener.fetch.web_search import TavilyClient
 from screener.geo.business_directory import build_business_directory
 from screener.geo.store import GeometryStore
 from screener.resolve.address_regex import DatafordelerAddressValidator
+from screener.resolve.business_corrections import apply_corrections, load_corrections
 from screener.resolve.cvr_discovery import discover_and_resolve_all_categories
 from screener.resolve.web_discovery_gaps import fill_gaps, find_gaps, prioritize_gaps
 from screener.score.pipeline import HARD_FILTER_CVR_CATEGORIES, score_listings, sort_scored_listings
@@ -45,6 +48,7 @@ def _discover_business_directory(
     *,
     osm_poi_cache_path: str,
     cvr_cache_path: str,
+    business_corrections_path: str,
     rebuild_discovery_cache: bool = False,
 ) -> dict:
     cvr_client = CvrPermanentClient(db=db)
@@ -60,6 +64,7 @@ def _discover_business_directory(
         force_rebuild=rebuild_discovery_cache,
         build_fn=lambda: discover_and_resolve_all_categories(
             cvr_client, validator, settings.cvr_branch_codes, settings.postal_ranges,
+            keyword_denylist_by_category=settings.cvr_category_keyword_denylist,
         ),
     )
 
@@ -101,6 +106,13 @@ def _discover_business_directory(
             for category, businesses in web_results.items():
                 businesses_by_category.setdefault(category, []).extend(businesses)
 
+    # Manual, hand-maintained fixes for businesses discovery got wrong (bad
+    # address, wrong category) -- see config/business_corrections.yaml.
+    # Applied last, after every source above is merged, so one entry fixes
+    # a business regardless of which source found it.
+    corrections = load_corrections(business_corrections_path)
+    businesses_by_category = apply_corrections(businesses_by_category, corrections, validator)
+
     return build_business_directory(businesses_by_category)
 
 
@@ -112,6 +124,9 @@ def main() -> None:
     parser.add_argument("--out", default=str(REPO_ROOT / "data" / "site" / "index.html"))
     parser.add_argument("--osm-poi-cache", default=str(REPO_ROOT / "data" / "osm_poi_cache.pkl"))
     parser.add_argument("--cvr-cache", default=str(REPO_ROOT / "data" / "cvr_business_cache.pkl"))
+    parser.add_argument(
+        "--business-corrections", default=str(REPO_ROOT / "config" / "business_corrections.yaml"),
+    )
     parser.add_argument(
         "--rebuild-discovery-cache", action="store_true",
         help="Force-rebuild the OSM POI and CVR discovery caches regardless of staleness.",
@@ -153,9 +168,21 @@ def main() -> None:
         sum(1 for l in listings if l["photo_url"]), len(listings),
     )
 
+    flood_rate_limiter = RateLimiter(5.0)
+    for listing in listings:
+        listing["flood_risk"] = fetch_flood_risk(
+            listing["lon"], listing["lat"], user_agent=settings.boligsiden.user_agent,
+            db=db, rate_limiter=flood_rate_limiter,
+        )
+    logger.info(
+        "assessed flood risk for %d of %d listings",
+        sum(1 for l in listings if l["flood_risk"]["assessed"]), len(listings),
+    )
+
     business_directory = _discover_business_directory(
         settings, db, args.osm_pbf, listings,
         osm_poi_cache_path=args.osm_poi_cache, cvr_cache_path=args.cvr_cache,
+        business_corrections_path=args.business_corrections,
         rebuild_discovery_cache=args.rebuild_discovery_cache,
     )
 

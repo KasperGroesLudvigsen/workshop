@@ -40,7 +40,10 @@
   button.action-btn.active { background: #fff2c2; border-color: #e0b400; }
   tr.row-liked { background: #fffbea; }
   tr.row-hidden { opacity: 0.5; }
-  .popup-photo { width: 100%; max-height: 140px; object-fit: cover; border-radius: 4px; display: block; margin-bottom: 6px; }
+  /* Fixed (not max-) height: reserves the box before the image has loaded,
+     so Leaflet's popup auto-pan -- computed once, at open time -- doesn't
+     under-measure the popup and leave part of it above the map. */
+  .popup-photo { width: 100%; height: 140px; object-fit: cover; border-radius: 4px; display: block; margin-bottom: 6px; }
   .popup-title { font-size: 14px; font-weight: 700; }
   .popup-price { font-size: 14px; font-weight: 700; color: #14343b; margin-top: 2px; }
   .popup-meta { color: #666; font-size: 11px; margin-top: 2px; }
@@ -91,6 +94,7 @@
         <col style="width:60px">
         <col style="width:55px">
         <col style="width:50px">
+        <col style="width:110px">
         <col style="width:190px">
       </colgroup>
       <thead>
@@ -112,6 +116,7 @@
           <th data-key="lot_size_m2">Lot m²</th>
           <th data-key="rooms">Rooms</th>
           <th data-key="build_year">Year</th>
+          <th data-key="flood_risk">Flood risk</th>
           <th>Links</th>
         </tr>
       </thead>
@@ -218,6 +223,14 @@ function fmtCategoryKm(cat, km) {
   if (km === null || km === undefined) return '<em>none</em>';
   return fmt(km);
 }
+// Kystdirektoratet only publishes hazard data within its own designated
+// risk areas -- outside one, a listing isn't "safe", it's simply unassessed,
+// so that's shown as its own state rather than folded into "no risk found".
+function fmtFloodRisk(fr) {
+  if (!fr || !fr.assessed) return '<em>not assessed</em>';
+  if (fr.shortest_hazard_return_period_years == null) return 'no mapped risk';
+  return `≤${fr.shortest_hazard_return_period_years}yr storm surge`;
+}
 
 function deriveRow(listing, cfg) {
   const water = listing.water;
@@ -304,6 +317,7 @@ function sortRows(rows) {
     lot_size_m2: r => r.listing.lot_size_m2,
     rooms: r => r.listing.rooms,
     build_year: r => r.listing.build_year,
+    flood_risk: r => r.listing.flood_risk.shortest_hazard_return_period_years,
   };
   const getter = getters[key] || getters.hangout_km;
   return rows.slice().sort((a, b) => {
@@ -375,6 +389,7 @@ function rowHtml(row) {
       <td>${l.lot_size_m2 ?? '—'}</td>
       <td>${l.rooms ?? '—'}</td>
       <td>${l.build_year ?? '—'}</td>
+      <td>${fmtFloodRisk(l.flood_risk)}</td>
       <td>${linksHtml(l)}</td>
     </tr>
   `;
@@ -463,6 +478,7 @@ function popupHtml(row) {
       <div class="popup-meta">${l.size_m2 ?? '—'} m² &middot; ${l.rooms ?? '—'} rooms${l.build_year ? ' &middot; built ' + l.build_year : ''}</div>
       <div class="popup-section"><span class="popup-label">Open water:</span> ${fmt(row.openWater)} km (sea ${fmt(l.water.sea_distance_km)} km,
         lake ${row.lakeCandidate ? fmt(row.lakeCandidate.distance_km) + ' km, ' + row.lakeCandidate.eligibility_reason : 'n/a'})</div>
+      <div class="popup-section"><span class="popup-label">Flood risk (storm surge):</span> ${fmtFloodRisk(l.flood_risk)}</div>
       <div class="popup-section"><span class="popup-label">Hangouts (${cfg.hangoutKm} km):</span> ${hangoutLinksHtml(l.hangout, cfg.hangoutKm)}</div>
       <div class="popup-section"><span class="popup-label">Grocery (${cfg.groceryKm} km):</span> ${namesList(l.grocery, cfg.groceryKm)}</div>
       <div class="popup-section"><span class="popup-label">Marina:</span> ${namesList(l.marina, 15)}</div>

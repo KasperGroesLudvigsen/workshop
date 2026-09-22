@@ -180,6 +180,16 @@ def test_skips_hit_missing_address_fields():
     assert resolve_discovered_businesses([hit], validator, category="hangout") == []
 
 
+def test_skips_hit_whose_name_matches_keyword_denylist_even_if_address_validates():
+    # confirmed live: "FRIIS BYG & HAVE" (a building/garden supplies
+    # business) is registered under a restaurant-adjacent CVR branch code
+    # and would otherwise pass the address gate cleanly.
+    hit = _raw_business("Friis Byg & Have", "Rødkullevej", "60", 4230, "Skælskør")
+    validator = _FakeValidator(("Rødkullevej 60", "4230", "Skælskør"))
+    result = resolve_discovered_businesses([hit], validator, category="hangout", keyword_denylist=["byg", "tømrer"])
+    assert result == []
+
+
 # -- discover_and_resolve_all_categories (end-to-end fetch + resolve) -----
 
 

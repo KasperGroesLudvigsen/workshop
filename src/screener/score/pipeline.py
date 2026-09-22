@@ -98,6 +98,7 @@ def score_listing(
         "town": town,
         "listing_url": listing.get("url"),
         "photo_url": listing.get("photo_url"),
+        "flood_risk": listing.get("flood_risk", {"assessed": False, "shortest_hazard_return_period_years": None}),
         "water": {
             "sea_distance_km": water.sea_distance_km,
             "nearest_lake_any": asdict(water.nearest_lake_any) if water.nearest_lake_any else None,

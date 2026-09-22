@@ -37,6 +37,7 @@ class Settings:
     hard_filter_categories: list[str]
     informational_categories: list[str]
     cvr_branch_codes: dict[str, list[str]]
+    cvr_category_keyword_denylist: dict[str, list[str]]
     web_search_terms: dict[str, str]
     web_search_monthly_budget: int
     web_search_max_calls_per_run: int
@@ -63,6 +64,7 @@ def load_settings(path: Path | str = DEFAULT_CONFIG_PATH) -> Settings:
         hard_filter_categories=list(raw["hard_filter_categories"]),
         informational_categories=list(raw["informational_categories"]),
         cvr_branch_codes={k: list(v) for k, v in raw.get("cvr_branch_codes", {}).items()},
+        cvr_category_keyword_denylist={k: list(v) for k, v in raw.get("cvr_category_keyword_denylist", {}).items()},
         web_search_terms={k: str(v) for k, v in raw.get("web_search_terms", {}).items()},
         web_search_monthly_budget=int(raw["web_search_monthly_budget"]),
         web_search_max_calls_per_run=int(raw["web_search_max_calls_per_run"]),

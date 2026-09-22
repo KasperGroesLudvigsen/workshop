@@ -1,0 +1,23 @@
+# Manual fixes for businesses the discovery pipeline got wrong. `name` must
+# match exactly what's shown on the site (case/whitespace-insensitive) --
+# copy it straight from a popup or table row, nothing else to look up.
+# `reason` is free text, for future readers, not used by the code.
+#
+# If a rule below stops matching anything (the business was renamed, or a
+# re-run's discovery sources changed), jobs/run_real.py logs a warning
+# naming the stale entry -- it's never a silent no-op.
+
+exclude:
+  - name: "Cafe JaTak ApS"
+    reason: "Permanently closed (Google Maps, 2026-09-22); was also resolved to its CVR-registered Lundby address, not its real Herlufmagle location"
+  - name: "Café & Restaurant Mona"
+    reason: "Permanently closed (Google Maps, 2026-09-22)"
+  - name: "FRIIS BYG & HAVE"
+    reason: "Registered under a restaurant CVR branch code; actually a building/garden supplies business"
+
+relocate:
+  - name: "Havblik Agersø"
+    street: "Agersø Møllevej 9A"
+    postal_code: "4244"
+    town: "Agersø By"
+    reason: "CVR/registered address (Skolevangen 25, Magleby) is a mailing address, not where the restaurant operates"

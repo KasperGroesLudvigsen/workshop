@@ -4,6 +4,14 @@ whichever real-estate agent's site actually hosts it, or a Boligsiden page
 if it doesn't redirect). Almost every listing site sets one of these tags
 for social-link previews, so no site-specific scraping is needed.
 
+Confirmed live 2026-09-22: ``boligsiden.dk/viderestilling/{id}`` is not an
+HTTP redirect at all -- it's a 200 OK Next.js page containing a
+browser-executed ``<meta http-equiv="refresh" content="1;url=...">``, which
+``requests`` never follows (it only follows real 3xx responses). Fetching it
+directly always lands on this redirect-stub page, which has no og:image of
+its own -- the actual agent page one hop further has to be fetched
+explicitly.
+
 Same "never raises" posture as ``fetch_html_page`` and ``resolve/jsonld.py``:
 a missing or unreachable photo is an expected outcome for a subset of any
 real batch, not a failure worth crashing a run over — the popup just omits
@@ -13,6 +21,7 @@ stage, so re-running the pipeline only fetches new listings' pages.
 """
 from __future__ import annotations
 
+import html as html_module
 import logging
 import re
 
@@ -37,6 +46,11 @@ _META_PATTERNS = [
     ),
 ]
 
+_META_REFRESH_RE = re.compile(
+    r'<meta[^>]+http-equiv=["\']refresh["\'][^>]*content=["\'][^"\']*url=([^"\']+)["\']',
+    re.IGNORECASE,
+)
+
 
 def extract_preview_image_url(html: str) -> str | None:
     for pattern in _META_PATTERNS:
@@ -46,6 +60,11 @@ def extract_preview_image_url(html: str) -> str | None:
     return None
 
 
+def extract_meta_refresh_url(html: str) -> str | None:
+    match = _META_REFRESH_RE.search(html)
+    return html_module.unescape(match.group(1)) if match else None
+
+
 def fetch_listing_photo_url(url: str, *, user_agent: str, db: Database) -> str | None:
     key = cache_key(_SOURCE, url, None)
     html = db.get_cached_response(key)
@@ -53,5 +72,10 @@ def fetch_listing_photo_url(url: str, *, user_agent: str, db: Database) -> str |
         html = fetch_html_page(url, user_agent=user_agent)
         if html is None:
             return None
+        redirect_url = extract_meta_refresh_url(html)
+        if redirect_url is not None:
+            redirected_html = fetch_html_page(redirect_url, user_agent=user_agent)
+            if redirected_html is not None:
+                html = redirected_html
         db.save_raw_response(source=_SOURCE, url=url, params=None, status_code=200, body=html, key=key)
     return extract_preview_image_url(html)

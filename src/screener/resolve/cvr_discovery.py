@@ -43,14 +43,19 @@ def _candidate_from_hit(raw: dict[str, Any]) -> AddressCandidate | None:
 
 
 def resolve_discovered_businesses(
-    hits: list[dict[str, Any]], validator: AddressValidator, category: str
+    hits: list[dict[str, Any]], validator: AddressValidator, category: str,
+    keyword_denylist: list[str] | None = None,
 ) -> list[ResolvedBusiness]:
+    keyword_denylist = keyword_denylist or []
     resolved: list[ResolvedBusiness] = []
     for raw in hits:
         name = raw.get("virksomhedMetadata", {}).get("nyesteNavn", {}).get("navn")
         candidate = _candidate_from_hit(raw)
         if name is None or candidate is None:
             logger.info("cvr_discovery: skipping %s (missing name or address fields)", raw.get("cvrNummer"))
+            continue
+        if any(keyword.lower() in name.lower() for keyword in keyword_denylist):
+            logger.info("cvr_discovery: skipping %r (name matches %s keyword denylist)", name, category)
             continue
         validated = validator.validate(candidate)
         if validated is None:
@@ -72,11 +77,13 @@ def discover_and_resolve_all_categories(
     validator: AddressValidator,
     branch_codes_by_category: dict[str, list[str]],
     postal_ranges: list[tuple[int, int]],
+    keyword_denylist_by_category: dict[str, list[str]] | None = None,
 ) -> dict[str, list[ResolvedBusiness]]:
     """Discover + resolve every CVR-backed category in one pass -- the
     ``build_fn`` handed to ``fetch.discovery_cache.load_or_build`` so the
     whole (Elasticsearch queries + rate-limited DAR validation) pass can be
     skipped entirely on a cache hit, not just individual HTTP calls."""
+    keyword_denylist_by_category = keyword_denylist_by_category or {}
     businesses_by_category: dict[str, list[ResolvedBusiness]] = {}
     for category, branch_codes in branch_codes_by_category.items():
         logger.info("discovering %s businesses (branch codes %s)", category, branch_codes)
@@ -85,7 +92,9 @@ def discover_and_resolve_all_categories(
                 branch_code_prefixes=branch_codes, postal_ranges=postal_ranges,
             )
         )
-        resolved = resolve_discovered_businesses(hits, validator, category=category)
+        resolved = resolve_discovered_businesses(
+            hits, validator, category=category, keyword_denylist=keyword_denylist_by_category.get(category),
+        )
         logger.info("%s: %d candidates, %d validated", category, len(hits), len(resolved))
         businesses_by_category[category] = resolved
     return businesses_by_category
