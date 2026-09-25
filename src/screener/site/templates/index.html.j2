@@ -223,13 +223,20 @@ function fmtCategoryKm(cat, km) {
   if (km === null || km === undefined) return '<em>none</em>';
   return fmt(km);
 }
-// Kystdirektoratet only publishes hazard data within its own designated
-// risk areas -- outside one, a listing isn't "safe", it's simply unassessed,
-// so that's shown as its own state rather than folded into "no risk found".
+// Only two states are shown, not three: a real hazard hit (with return
+// period + depth), or "no flood risk mapped". A genuinely safe, modeled
+// point and a point outside Kystplanlægger's model produce the identical
+// signature in this data (no hazard, no depth reading), so a separate
+// "not assessed" state can't be claimed honestly here.
 function fmtFloodRisk(fr) {
-  if (!fr || !fr.assessed) return '<em>not assessed</em>';
-  if (fr.shortest_hazard_return_period_years == null) return 'no mapped risk';
-  return `≤${fr.shortest_hazard_return_period_years}yr storm surge`;
+  if (!fr || fr.current_return_period_years == null) return '<em>no flood risk mapped</em>';
+  const depth = fr.current_depth_m != null ? ` (${fr.current_depth_m.toFixed(2)}m)` : '';
+  return `≤${fr.current_return_period_years}yr storm surge${depth}`;
+}
+function fmtFloodRisk2120(fr) {
+  if (!fr || fr['2120_return_period_years'] == null) return '<em>no flood risk mapped</em>';
+  const depth = fr['2120_depth_m'] != null ? ` (${fr['2120_depth_m'].toFixed(2)}m)` : '';
+  return `≤${fr['2120_return_period_years']}yr storm surge${depth}`;
 }
 
 function deriveRow(listing, cfg) {
@@ -317,7 +324,7 @@ function sortRows(rows) {
     lot_size_m2: r => r.listing.lot_size_m2,
     rooms: r => r.listing.rooms,
     build_year: r => r.listing.build_year,
-    flood_risk: r => r.listing.flood_risk.shortest_hazard_return_period_years,
+    flood_risk: r => r.listing.flood_risk.current_return_period_years,
   };
   const getter = getters[key] || getters.hangout_km;
   return rows.slice().sort((a, b) => {
@@ -478,7 +485,8 @@ function popupHtml(row) {
       <div class="popup-meta">${l.size_m2 ?? '—'} m² &middot; ${l.rooms ?? '—'} rooms${l.build_year ? ' &middot; built ' + l.build_year : ''}</div>
       <div class="popup-section"><span class="popup-label">Open water:</span> ${fmt(row.openWater)} km (sea ${fmt(l.water.sea_distance_km)} km,
         lake ${row.lakeCandidate ? fmt(row.lakeCandidate.distance_km) + ' km, ' + row.lakeCandidate.eligibility_reason : 'n/a'})</div>
-      <div class="popup-section"><span class="popup-label">Flood risk (storm surge):</span> ${fmtFloodRisk(l.flood_risk)}</div>
+      <div class="popup-section"><span class="popup-label">Flood risk (storm surge, today):</span> ${fmtFloodRisk(l.flood_risk)}</div>
+      <div class="popup-section"><span class="popup-label">Flood risk by 2120:</span> ${fmtFloodRisk2120(l.flood_risk)}</div>
       <div class="popup-section"><span class="popup-label">Hangouts (${cfg.hangoutKm} km):</span> ${hangoutLinksHtml(l.hangout, cfg.hangoutKm)}</div>
       <div class="popup-section"><span class="popup-label">Grocery (${cfg.groceryKm} km):</span> ${namesList(l.grocery, cfg.groceryKm)}</div>
       <div class="popup-section"><span class="popup-label">Marina:</span> ${namesList(l.marina, 15)}</div>

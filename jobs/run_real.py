@@ -175,8 +175,8 @@ def main() -> None:
             db=db, rate_limiter=flood_rate_limiter,
         )
     logger.info(
-        "assessed flood risk for %d of %d listings",
-        sum(1 for l in listings if l["flood_risk"]["assessed"]), len(listings),
+        "found a mapped flood risk for %d of %d listings",
+        sum(1 for l in listings if l["flood_risk"]["current_return_period_years"] is not None), len(listings),
     )
 
     business_directory = _discover_business_directory(

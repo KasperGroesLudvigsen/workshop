@@ -56,8 +56,9 @@ below) rather than sent anywhere, since there's nowhere to send it to.
 ## What it shows
 
 **The map** (Leaflet + OpenStreetMap tiles): one marker per surviving listing. Clicking a pin
-pops up its address, open-water breakdown (sea vs. lake, with the eligibility reason), and the
-named hangouts/grocery stores/marinas/playgrounds/pools/beaches found nearby.
+pops up its address, price/size/rooms, a photo (when one could be found), open-water breakdown
+(sea vs. lake, with the eligibility reason), flood risk (see below), and the named
+hangouts/grocery stores/marinas/playgrounds/pools/beaches found nearby.
 
 **The table**, one row per listing, every column sortable by click:
 
@@ -69,7 +70,50 @@ named hangouts/grocery stores/marinas/playgrounds/pools/beaches found nearby.
 | Grocery (km) | Distance to the nearest grocery store |
 | Marina / Playground / Pool / Beach (km) | Informational-only distances — shown, never filtered on |
 | Price, m², Lot m², Rooms, Year | Listing basics, straight from Boligsiden |
-| Links | The Boligsiden listing, Google Maps pin/aerial/street view, Apple Maps |
+| Flood risk | Coastal storm-surge flood risk, today and projected to 2120 — see "Flood risk" below |
+| Links | The Boligsiden listing (both the agent's own page and a boligsiden.dk address page), Google Maps pin/aerial/street view |
+
+### Flood risk
+
+Each listing shows a coastal (storm-surge) flood-risk reading, e.g. **"≤50yr storm surge
+(1.16m)"**, sourced from Kystdirektoratet's official **Kystplanlægger 2120** model — free, public
+data, not scraped from anywhere (see "Why not DinGeo" below).
+
+- **"≤50yr"** is a *return period*: the shortest/most frequent storm severity Kystdirektoratet's
+  model expects would flood this specific point, out of the four severities it tests (50, 100,
+  1,000, and 10,000 years). A **lower** number means a **more common** storm already floods the
+  spot — worse — since a "50-year storm" happens far more often than a "10,000-year storm" (this
+  isn't a countdown or a guarantee of exact timing, just the model's long-run average frequency
+  for a storm of that severity).
+- **"(1.16m)"** is the modelled flood *depth* in metres at that same storm severity — how deep
+  the water is expected to get there, not how far it reaches inland.
+- **"today" vs. "by 2120"** are two separate readings for the same location: current conditions,
+  and Kystdirektoratet's own projection incorporating expected sea-level rise. The 2120 figure is
+  usually worse (a shorter return period and/or greater depth) for exactly that reason — climate
+  change, not a data error.
+- **"no flood risk mapped"** means none of the four tested storm severities produced a hazard hit
+  at that point *in this model* — not a certified "flood-proof" guarantee, just the best reading
+  this specific dataset can honestly give. See the note below on why this is a two-state reading,
+  not three.
+
+**Why not DinGeo (or a simpler "is this an official risk area" flag)?** DinGeo.dk shows a similar
+number, but both its `robots.txt` and terms of service explicitly forbid scraping/automated
+access, even for personal, non-commercial use — so its data isn't reused here at all. An earlier
+version of this feature instead queried Kystdirektoratet's official *EU Floods Directive*
+risk-area mapping (a boolean "is this one of ~51 officially designated risk-area municipalities"
+flag) — confirmed live to leave ~90% of listings "not assessed", since most summer houses sit in
+small coastal hamlets that regulatory dataset was never scoped to cover. Kystplanlægger 2120 is
+Kystdirektoratet's own *broader* nationwide coastal-risk screening tool instead, covering the
+whole Danish coast rather than a short list of cities — confirmed live against real listings that
+came back "not assessed" under the old approach, which came back with real hazard/depth data
+under this one.
+
+That broader coverage comes with one honest tradeoff: this model can't reliably tell apart "a
+real coastal point Kystdirektoratet checked and found safe" from "a point outside the model
+entirely" — both come back with no hazard data. The old, narrower dataset *could* draw that line
+(it had a dedicated designated-risk-area boundary layer), but this one doesn't have an equivalent.
+Rather than falsely imply a location was checked and cleared, "no flood risk mapped" is used for
+both cases.
 
 **Live filter controls** above the map/table recompute both the map and the table instantly,
 client-side, with no server round-trip and no re-score:
@@ -297,7 +341,50 @@ The CVR cache auto-refreshes itself after 7 days (`cvr_cache_max_age_days` in
 is re-downloaded. Pass `--rebuild-discovery-cache` to `jobs\run_real.py` to force both to rebuild
 regardless. See `docs/HANDOFF.md` for the current state of each piece and what's next.
 
-### 6. Reopening the app later
+### 6. Fixing a bad business (wrong location, wrong category, or closed)
+
+Business discovery occasionally gets one wrong: a company's CVR-registered address is sometimes
+an accountant's office or a legacy address, not the real venue, and a CVR branch code doesn't
+always match what a business actually sells (a "Restauranter"-classified sole proprietorship
+that's really a builder's merchant, say). Rather than trying to fully automate detecting this,
+the pipeline reads a small hand-maintained file, `config/business_corrections.yaml`, applied
+after CVR, OSM, and Tavily web-search discovery are all merged — so one entry fixes a business
+no matter which source found it.
+
+Fixing something you spot on the site only takes one piece of information: the business's exact
+name, copied straight from the site (a popup's hangout line, or the table) — no CVR lookup, no
+address lookup needed. Two things you can do:
+
+- **`exclude`** a business entirely — for one that's actually closed, or isn't really the kind of
+  business it was matched as.
+- **`relocate`** a business — for one that resolved to the wrong address (its CVR-registered
+  address, say, rather than where it actually operates). Give the corrected street/postal
+  code/town; the pipeline re-validates that address against the real Danish address register
+  (the same gate every other address in the pipeline goes through), rather than trusting typed-in
+  text blindly.
+
+```yaml
+exclude:
+  - name: "Cafe JaTak ApS"
+    reason: "Permanently closed (Google Maps, 2026-09-22)"
+
+relocate:
+  - name: "Havblik Agersø"
+    street: "Agersø Møllevej 9A"
+    postal_code: "4244"
+    town: "Agersø By"
+    reason: "CVR-registered address is a mailing address, not the restaurant itself"
+```
+
+`reason` is free text for future readers — it isn't used by the code. Re-run `jobs\run_real.py`
+after editing the file to pick up the change; the CVR/OSM discovery caches don't need rebuilding,
+since corrections are applied after they're loaded, not baked into them.
+
+**If an entry stops matching anything** — the business was renamed, or a later run's discovery
+sources turn up different results — `jobs\run_real.py` logs a warning naming the stale entry, so
+a typo or an outdated fix is never silently ineffective.
+
+### 7. Reopening the app later
 
 `data\site\index.html` is a self-contained static file — all listing data is embedded in it
 directly, so just *opening* it (as opposed to regenerating it) never fetches anything over

@@ -14,7 +14,8 @@ exclude:
     reason: "Permanently closed (Google Maps, 2026-09-22)"
   - name: "FRIIS BYG & HAVE"
     reason: "Registered under a restaurant CVR branch code; actually a building/garden supplies business"
-
+  - name: "Mad og rengøringskonsulenten"
+    reason: "Actually a cleaning agency"
 relocate:
   - name: "Havblik Agersø"
     street: "Agersø Møllevej 9A"
