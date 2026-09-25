@@ -23,6 +23,7 @@ from screener.fetch.boligsiden import BoligsidenClient, normalize_case
 from screener.fetch._rate_limit import RateLimiter
 from screener.fetch.cvr_discovery import CvrPermanentClient
 from screener.fetch.discovery_cache import load_or_build
+from screener.fetch.driving_time import fetch_driving_times, geocode_origin, origin_address_from_env
 from screener.fetch.flood_risk import fetch_flood_risk
 from screener.fetch.listing_photo import fetch_listing_photo_url
 from screener.fetch.osm_poi import extract_business_pois
@@ -45,6 +46,7 @@ def _discover_business_directory(
     db: Database,
     osm_pbf_path: str,
     listings: list[dict[str, Any]],
+    validator: DatafordelerAddressValidator,
     *,
     osm_poi_cache_path: str,
     cvr_cache_path: str,
@@ -52,7 +54,6 @@ def _discover_business_directory(
     rebuild_discovery_cache: bool = False,
 ) -> dict:
     cvr_client = CvrPermanentClient(db=db)
-    validator = DatafordelerAddressValidator()
 
     # CVR bulk discovery + DAR validation and OSM POI extraction are both
     # region-wide and listing-independent -- neither needs re-running every
@@ -145,6 +146,11 @@ def main() -> None:
     badevand_lookup = build_badevand_lookup(load_badevand_sites(args.badevand))
 
     db = Database()
+    validator = DatafordelerAddressValidator()
+    driving_origin_address = origin_address_from_env()
+    origin = geocode_origin(driving_origin_address, validator)
+    logger.info("driving-time origin %r resolved to (%s, %s)", driving_origin_address, *origin)
+
     client = BoligsidenClient(settings.boligsiden, db=db)
     logger.info(
         "fetching real Boligsiden listings for postal ranges %s, addressType=%r",
@@ -179,8 +185,19 @@ def main() -> None:
         sum(1 for l in listings if l["flood_risk"]["current_return_period_years"] is not None), len(listings),
     )
 
+    driving_rate_limiter = RateLimiter(1.0)  # OSRM's public demo server: max 1 req/sec
+    driving_times = fetch_driving_times(
+        origin, listings, db=db, rate_limiter=driving_rate_limiter, user_agent=settings.boligsiden.user_agent,
+    )
+    for listing in listings:
+        listing["driving_time"] = driving_times[listing["id"]]
+    logger.info(
+        "found a driving time for %d of %d listings",
+        sum(1 for l in listings if l["driving_time"]["duration_min"] is not None), len(listings),
+    )
+
     business_directory = _discover_business_directory(
-        settings, db, args.osm_pbf, listings,
+        settings, db, args.osm_pbf, listings, validator,
         osm_poi_cache_path=args.osm_poi_cache, cvr_cache_path=args.cvr_cache,
         business_corrections_path=args.business_corrections,
         rebuild_discovery_cache=args.rebuild_discovery_cache,
@@ -191,7 +208,7 @@ def main() -> None:
     passed = [r for r in scored if r["passed"]]
     logger.info("%d of %d listings pass all hard filters", len(passed), len(scored))
 
-    out_path = build_site(scored, settings, args.out)
+    out_path = build_site(scored, settings, args.out, driving_origin_address=driving_origin_address)
     logger.info("site written to %s", out_path)
 
 

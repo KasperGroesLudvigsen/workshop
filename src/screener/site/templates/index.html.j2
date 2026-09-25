@@ -56,6 +56,7 @@
 <header>
   <h1>Summer House Screener</h1>
   <span class="count"><span id="visible-count">0</span> of {{ listings|length }} listings passing current filters</span>
+  {% if config.driving_origin_address %}<span class="count">Drive times from: {{ config.driving_origin_address }}</span>{% endif %}
 </header>
 <div id="filters">
   <label>Water (km) <input type="number" id="f-water" step="0.5" value="{{ config.water_km }}"></label>
@@ -67,6 +68,7 @@
   <label>Min price <input type="number" id="f-price-min"></label>
   <label>Max price <input type="number" id="f-price-max"></label>
   <label>Min rooms <input type="number" id="f-rooms-min"></label>
+  <label>Min baths <input type="number" id="f-bathrooms-min"></label>
   <label>Min m² <input type="number" id="f-size-min"></label>
   <label>Min lot m² <input type="number" id="f-lot-min"></label>
   <label>Min build year <input type="number" id="f-year-min"></label>
@@ -93,7 +95,9 @@
         <col style="width:45px">
         <col style="width:60px">
         <col style="width:55px">
+        <col style="width:45px">
         <col style="width:50px">
+        <col style="width:110px">
         <col style="width:110px">
         <col style="width:190px">
       </colgroup>
@@ -115,8 +119,10 @@
           <th data-key="size_m2">m²</th>
           <th data-key="lot_size_m2">Lot m²</th>
           <th data-key="rooms">Rooms</th>
+          <th data-key="bathrooms">Baths</th>
           <th data-key="build_year">Year</th>
           <th data-key="flood_risk">Flood risk</th>
+          <th data-key="driving_time">Drive time</th>
           <th>Links</th>
         </tr>
       </thead>
@@ -238,6 +244,11 @@ function fmtFloodRisk2120(fr) {
   const depth = fr['2120_depth_m'] != null ? ` (${fr['2120_depth_m'].toFixed(2)}m)` : '';
   return `≤${fr['2120_return_period_years']}yr storm surge${depth}`;
 }
+function fmtDrivingTime(dt) {
+  if (!dt || dt.duration_min == null) return '<em>no route found</em>';
+  const dist = dt.distance_km != null ? ` (${dt.distance_km}km)` : '';
+  return `${dt.duration_min}min${dist}`;
+}
 
 function deriveRow(listing, cfg) {
   const water = listing.water;
@@ -288,6 +299,7 @@ function currentConfig() {
     priceMin: parseFloat(document.getElementById('f-price-min').value) || null,
     priceMax: parseFloat(document.getElementById('f-price-max').value) || null,
     roomsMin: parseFloat(document.getElementById('f-rooms-min').value) || null,
+    bathroomsMin: parseFloat(document.getElementById('f-bathrooms-min').value) || null,
     sizeMin: parseFloat(document.getElementById('f-size-min').value) || null,
     lotMin: parseFloat(document.getElementById('f-lot-min').value) || null,
     yearMin: parseFloat(document.getElementById('f-year-min').value) || null,
@@ -299,6 +311,7 @@ function applyExtraFilters(row, cfg) {
   if (cfg.priceMin !== null && (l.price === null || l.price < cfg.priceMin)) return false;
   if (cfg.priceMax !== null && (l.price === null || l.price > cfg.priceMax)) return false;
   if (cfg.roomsMin !== null && (l.rooms === null || l.rooms < cfg.roomsMin)) return false;
+  if (cfg.bathroomsMin !== null && (l.bathrooms === null || l.bathrooms < cfg.bathroomsMin)) return false;
   if (cfg.sizeMin !== null && (l.size_m2 === null || l.size_m2 < cfg.sizeMin)) return false;
   if (cfg.lotMin !== null && (l.lot_size_m2 === null || l.lot_size_m2 < cfg.lotMin)) return false;
   if (cfg.yearMin !== null && (l.build_year === null || l.build_year < cfg.yearMin)) return false;
@@ -324,7 +337,9 @@ function sortRows(rows) {
     lot_size_m2: r => r.listing.lot_size_m2,
     rooms: r => r.listing.rooms,
     build_year: r => r.listing.build_year,
+    bathrooms: r => r.listing.bathrooms,
     flood_risk: r => r.listing.flood_risk.current_return_period_years,
+    driving_time: r => r.listing.driving_time.duration_min,
   };
   const getter = getters[key] || getters.hangout_km;
   return rows.slice().sort((a, b) => {
@@ -395,8 +410,10 @@ function rowHtml(row) {
       <td>${l.size_m2 ?? '—'}</td>
       <td>${l.lot_size_m2 ?? '—'}</td>
       <td>${l.rooms ?? '—'}</td>
+      <td>${l.bathrooms ?? '—'}</td>
       <td>${l.build_year ?? '—'}</td>
       <td>${fmtFloodRisk(l.flood_risk)}</td>
+      <td>${fmtDrivingTime(l.driving_time)}</td>
       <td>${linksHtml(l)}</td>
     </tr>
   `;
@@ -482,11 +499,12 @@ function popupHtml(row) {
       ${photo}
       <div class="popup-title">${l.address ?? l.listing_id}${cityLine ? ', ' + cityLine : ''}</div>
       <div class="popup-price">${fmtPrice(l.price)}</div>
-      <div class="popup-meta">${l.size_m2 ?? '—'} m² &middot; ${l.rooms ?? '—'} rooms${l.build_year ? ' &middot; built ' + l.build_year : ''}</div>
+      <div class="popup-meta">${l.size_m2 ?? '—'} m² &middot; ${l.rooms ?? '—'} rooms &middot; ${l.bathrooms ?? '—'} bath${l.bathrooms === 1 ? '' : 's'}${l.build_year ? ' &middot; built ' + l.build_year : ''}</div>
       <div class="popup-section"><span class="popup-label">Open water:</span> ${fmt(row.openWater)} km (sea ${fmt(l.water.sea_distance_km)} km,
         lake ${row.lakeCandidate ? fmt(row.lakeCandidate.distance_km) + ' km, ' + row.lakeCandidate.eligibility_reason : 'n/a'})</div>
       <div class="popup-section"><span class="popup-label">Flood risk (storm surge, today):</span> ${fmtFloodRisk(l.flood_risk)}</div>
       <div class="popup-section"><span class="popup-label">Flood risk by 2120:</span> ${fmtFloodRisk2120(l.flood_risk)}</div>
+      <div class="popup-section"><span class="popup-label">Drive time:</span> ${fmtDrivingTime(l.driving_time)}</div>
       <div class="popup-section"><span class="popup-label">Hangouts (${cfg.hangoutKm} km):</span> ${hangoutLinksHtml(l.hangout, cfg.hangoutKm)}</div>
       <div class="popup-section"><span class="popup-label">Grocery (${cfg.groceryKm} km):</span> ${namesList(l.grocery, cfg.groceryKm)}</div>
       <div class="popup-section"><span class="popup-label">Marina:</span> ${namesList(l.marina, 15)}</div>

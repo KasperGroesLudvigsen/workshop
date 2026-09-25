@@ -69,8 +69,9 @@ hangouts/grocery stores/marinas/playgrounds/pools/beaches found nearby.
 | Hangout (km) / Hangouts within | Distance to the nearest hangout, and how many fall within the current threshold |
 | Grocery (km) | Distance to the nearest grocery store |
 | Marina / Playground / Pool / Beach (km) | Informational-only distances — shown, never filtered on |
-| Price, m², Lot m², Rooms, Year | Listing basics, straight from Boligsiden |
+| Price, m², Lot m², Rooms, Baths, Year | Listing basics, straight from Boligsiden |
 | Flood risk | Coastal storm-surge flood risk, today and projected to 2120 — see "Flood risk" below |
+| Drive time | Driving time/distance from a configurable point of departure — see "Driving time" below |
 | Links | The Boligsiden listing (both the agent's own page and a boligsiden.dk address page), Google Maps pin/aerial/street view |
 
 ### Flood risk
@@ -114,6 +115,25 @@ entirely" — both come back with no hazard data. The old, narrower dataset *cou
 (it had a dedicated designated-risk-area boundary layer), but this one doesn't have an equivalent.
 Rather than falsely imply a location was checked and cleared, "no flood risk mapped" is used for
 both cases.
+
+### Driving time
+
+Each listing shows driving time and distance from a single, configurable point of departure, e.g.
+**"38min (35km)"** — set via `DRIVING_ORIGIN_ADDRESS` in `.env` (see "Set up API keys and
+configuration" above). The configured address is also shown in the page header, so it's always
+clear what the numbers are measured from.
+
+Computed via [OSRM](https://project-osrm.org)'s free, public routing server, using its **Table**
+service — a single request computes driving time/distance from one origin to many destinations at
+once (confirmed live: 100 destinations per request, well within the server's own limits), rather
+than one request per listing. For the ~2,400 listings in a full regional run, that's on the order
+of 25 requests total, rate-limited to match OSRM's own published usage policy ("reasonable,
+non-commercial use... must not exceed 1 request per second"). Each listing's own result is still
+cached individually (like `flood_risk` and the listing photo), so a later run only fetches
+listings that are actually new — changing `DRIVING_ORIGIN_ADDRESS` naturally invalidates old
+results too, since the origin is part of the cache key, with no manual cache-clearing step needed.
+**"no route found"** means OSRM couldn't compute a route at all (e.g. an island with no bridge or
+ferry link in the road network it uses), not that the listing is unreachable in reality.
 
 **Live filter controls** above the map/table recompute both the map and the table instantly,
 client-side, with no server round-trip and no re-score:
@@ -256,7 +276,7 @@ The optional `llm` extra (`pip install -e ".[llm]"`) is only needed for the last
 address-extraction step and requires `ANTHROPIC_API_KEY` — skip it unless you're exercising
 that path.
 
-### 2. Set up API keys
+### 2. Set up API keys and configuration
 
 Create a `.env` file in the repo root (already gitignored — never commit it):
 
@@ -265,12 +285,14 @@ DATAFORDELER_DAR_API_KEY=<your key>
 CVR_USERNAME=<your cvr-permanent username>
 CVR_PASSWORD=<your cvr-permanent password>
 TAVILY_API_KEY=<your tavily key>
+DRIVING_ORIGIN_ADDRESS=Bådehavnsgade 1, 2450 København SV
 ```
 
 `DATAFORDELER_DAR_API_KEY`: get a free key at [datafordeler.dk](https://datafordeler.dk) —
 register an account (email login is enough), create an IT-system under "Datafordelerens
 Administration", generate an API key, and request access to **Danmarks Adresseregister
-(DAR)**'s GraphQL service specifically. Used to confirm a candidate address is real.
+(DAR)**'s GraphQL service specifically. Used to confirm a candidate address is real — including,
+now, the driving-time origin address below.
 
 `CVR_USERNAME`/`CVR_PASSWORD`: request free system-til-system access at
 [datacvr.virk.dk](https://datacvr.virk.dk/artikel/system-til-system-adgang-til-cvr-data)
@@ -282,7 +304,16 @@ only as a last-resort business-discovery fallback for a (town, category) neither
 covered. Optional: if it's missing, `jobs/run_real.py` logs a warning and skips this fallback
 rather than failing the run.
 
-None of the three are needed for the demo site below.
+`DRIVING_ORIGIN_ADDRESS`: a plain Danish address (street + house number, postal code, town) —
+**required** for `jobs/run_real.py`, which fails loudly at startup if it's missing or doesn't
+resolve to a real address, since every listing's drive time depends on it. This is the point of
+departure driving times are measured from; change it any time by editing `.env` and re-running —
+no cache to clear, since the driving-time cache key includes the origin, so a changed origin
+automatically triggers fresh lookups. Geocoded through the same DAR lookup as everything else
+(`DATAFORDELER_DAR_API_KEY` above), then queried against
+[OSRM](https://project-osrm.org)'s free public routing server — see "Driving time" below.
+
+None of these are needed for the demo site below.
 
 ### 3. Run the test suite
 

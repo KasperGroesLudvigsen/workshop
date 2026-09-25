@@ -29,6 +29,7 @@ def _case(case_id: str, zip_code: int) -> dict:
         "housingArea": 60,
         "lotArea": 800,
         "numberOfRooms": 3,
+        "numberOfBathrooms": 1,
         "yearBuilt": 1975,
         "daysOnMarket": 10,
         "address": {
@@ -98,6 +99,7 @@ def test_normalize_case_maps_confirmed_fields():
     assert listing["size_m2"] == 60
     assert listing["lot_size_m2"] == 800
     assert listing["rooms"] == 3
+    assert listing["bathrooms"] == 1
     assert listing["build_year"] == 1975
     assert listing["days_on_market"] == 10
     assert listing["address"] == "Havnevej 1"

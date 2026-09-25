@@ -16,7 +16,7 @@ from screener.config import Settings
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 
 
-def _config_json(settings: Settings) -> dict[str, Any]:
+def _config_json(settings: Settings, driving_origin_address: str | None) -> dict[str, Any]:
     return {
         "water_km": settings.water_km,
         "hangout_km": settings.hangout_km,
@@ -24,16 +24,20 @@ def _config_json(settings: Settings) -> dict[str, Any]:
         "lake_strict": settings.lake_strict,
         "min_lake_area_ha": settings.min_lake_area_ha,
         "amenity_search_radius_km": settings.amenity_search_radius_km,
+        "driving_origin_address": driving_origin_address,
     }
 
 
-def build_site(scored_listings: list[dict[str, Any]], settings: Settings, out_path: Path | str) -> Path:
+def build_site(
+    scored_listings: list[dict[str, Any]], settings: Settings, out_path: Path | str,
+    *, driving_origin_address: str | None = None,
+) -> Path:
     env = Environment(
         loader=FileSystemLoader(str(TEMPLATE_DIR)),
         autoescape=select_autoescape(disabled_extensions=("j2",)),
     )
     template = env.get_template("index.html.j2")
-    config = _config_json(settings)
+    config = _config_json(settings, driving_origin_address)
     html = template.render(
         listings=scored_listings,
         listings_json=json.dumps(scored_listings),

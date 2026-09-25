@@ -90,6 +90,7 @@ def score_listing(
         "size_m2": listing.get("size_m2"),
         "lot_size_m2": listing.get("lot_size_m2"),
         "rooms": listing.get("rooms"),
+        "bathrooms": listing.get("bathrooms"),
         "build_year": listing.get("build_year"),
         "energy_class": listing.get("energy_class"),
         "days_on_market": listing.get("days_on_market"),
@@ -102,6 +103,7 @@ def score_listing(
             "current_return_period_years": None, "current_depth_m": None,
             "2120_return_period_years": None, "2120_depth_m": None,
         }),
+        "driving_time": listing.get("driving_time", {"duration_min": None, "distance_km": None}),
         "water": {
             "sea_distance_km": water.sea_distance_km,
             "nearest_lake_any": asdict(water.nearest_lake_any) if water.nearest_lake_any else None,

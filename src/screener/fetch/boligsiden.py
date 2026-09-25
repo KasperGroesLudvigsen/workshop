@@ -182,6 +182,7 @@ def normalize_case(raw: dict[str, Any]) -> dict[str, Any]:
         "size_m2": raw.get("housingArea"),
         "lot_size_m2": raw.get("lotArea"),
         "rooms": raw.get("numberOfRooms"),
+        "bathrooms": raw.get("numberOfBathrooms"),
         "build_year": raw.get("yearBuilt"),
         "energy_class": raw.get("energyLabel"),
         "days_on_market": raw.get("daysOnMarket"),
